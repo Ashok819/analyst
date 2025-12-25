@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Avaloka – Batting Analysis</title>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+
+<!-- PDF -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<style>
+body{margin:0;background:#020617;color:#fff;font-family:system-ui}
+#stage{height:100vh;display:flex;align-items:center;justify-content:center}
+canvas{max-width:100%;max-height:100%}
+video{display:none}
+
+#ui{
+  position:fixed;bottom:0;left:0;right:0;
+  background:#0f172a;padding:10px;
+  display:flex;gap:8px;flex-wrap:wrap
+}
+.stat{flex:1;min-width:120px}
+.stat span{font-size:11px;color:#94a3b8}
+.stat b{font-size:18px;color:#00f2ff}
+button,input{
+  flex:1;padding:12px;border:none;border-radius:8px;
+  font-weight:600;font-size:14px
+}
+button{background:#00f2ff;color:#000}
+</style>
+</head>
+
+<body>
+
+<div id="stage">
+  <video id="video" muted playsinline></video>
+  <canvas id="canvas"></canvas>
+</div>
+
+<div id="ui">
+  <div class="stat">
+    <span>Contact Angle</span><br>
+    <b id="angle">--</b>
+  </div>
+  <div class="stat">
+    <span>Head Stability</span><br>
+    <b id="head">--</b>
+  </div>
+
+  <button id="cam">🎥 Analyze</button>
+  <input type="file" id="upload" accept="video/*">
+  <button id="pdf">📄 Download PDF</button>
+</div>
+
+<script>
+/* ---------- ELEMENTS ---------- */
+const video=document.getElementById("video");
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+
+/* ---------- STATE ---------- */
+let lastResults=null,isLive=false;
+let wristY=[],headPos=[];
+let contactAngle=null,headScore=0;
+let frames=[],capturing=false;
+let lastCap=0;
+
+/* ---------- CONSTANTS ---------- */
+const CAPTURE_INTERVAL=120;
+const MAX_FRAMES=10;
+
+/* ---------- MEDIAPIPE ---------- */
+const pose=new Pose({
+  locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+});
+pose.setOptions({modelComplexity:1,smoothLandmarks:true});
+pose.onResults(r=>lastResults=r);
+
+/* ---------- HELPERS ---------- */
+function angle(a,b,c){
+  const r=Math.atan2(c.y-b.y,c.x-b.x)-Math.atan2(a.y-b.y,a.x-b.x);
+  let d=Math.abs(r*180/Math.PI);
+  return Math.round(d>180?360-d:d);
+}
+function drawRedLine(x){
+  ctx.strokeStyle="#ef4444";
+  ctx.setLineDash([6,6]);
+  ctx.beginPath();
+  ctx.moveTo(x*canvas.width,0);
+  ctx.lineTo(x*canvas.width,canvas.height);
+  ctx.stroke(); ctx.setLineDash([]);
+}
+
+/* ---------- RENDER ---------- */
+function render(){
+  if(video.paused&&!isLive) return;
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+
+  if(lastResults?.poseLandmarks){
+    const lm=lastResults.poseLandmarks;
+    drawConnectors(ctx,lm,POSE_CONNECTIONS,{color:"#00f2ff"});
+    drawLandmarks(ctx,lm,{color:"#fff",radius:2});
+    analyse(lm);
+  }
+
+  if(capturing){
+    const now=performance.now();
+    if(now-lastCap>CAPTURE_INTERVAL&&frames.length<MAX_FRAMES){
+      frames.push(canvas.toDataURL("image/jpeg",0.7));
+      lastCap=now;
+    }
+  }
+  requestAnimationFrame(render);
+}
+
+/* ---------- ANALYSIS ---------- */
+function analyse(lm){
+  const sh=lm[12],el=lm[14],wr=lm[16],hd=lm[0];
+  drawRedLine(lm[31].x); // front foot
+
+  // Head stability
+  headPos.push({x:hd.x,y:hd.y});
+  if(headPos.length>10) headPos.shift();
+  const avg=headPos.reduce((a,p)=>({x:a.x+p.x,y:a.y+p.y}),{x:0,y:0});
+  avg.x/=headPos.length; avg.y/=headPos.length;
+  headScore=Math.max(0,100-(Math.hypot(hd.x-avg.x,hd.y-avg.y)*900));
+  document.getElementById("head").innerText=Math.round(headScore)+"%";
+
+  // Contact detection
+  wristY.push(wr.y); if(wristY.length>6) wristY.shift();
+  if(wristY.length===6&&Math.abs(wristY[5]-wristY[0])<0.01){
+    contactAngle=angle(sh,el,wr);
+    document.getElementById("angle").innerText=contactAngle+"°";
+    startCapture();
+  }
+}
+function startCapture(){
+  if(!capturing){
+    frames=[];capturing=true;lastCap=0;
+    setTimeout(()=>capturing=false,1200);
+  }
+}
+
+/* ---------- INPUT ---------- */
+document.getElementById("cam").onclick=async()=>{
+  isLive=true;
+  const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
+  video.srcObject=s; video.play();
+  video.onloadedmetadata=()=>{
+    canvas.width=video.videoWidth;
+    canvas.height=video.videoHeight;
+    render(); aiLoop();
+  };
+};
+document.getElementById("upload").onchange=e=>{
+  video.srcObject=null;
+  video.src=URL.createObjectURL(e.target.files[0]);
+  video.play();
+  video.onloadedmetadata=()=>{
+    canvas.width=video.videoWidth;
+    canvas.height=video.videoHeight;
+    render(); aiLoop();
+  };
+};
+async function aiLoop(){
+  while(!video.paused||isLive){
+    await pose.send({image:video});
+    await new Promise(r=>setTimeout(r,40));
+  }
+}
+
+/* ---------- PDF ---------- */
+document.getElementById("pdf").onclick=()=>{
+  if(!frames.length) return alert("No contact captured");
+  const doc=new jspdf.jsPDF();
+  doc.text("AVALOKA – BATTING REPORT",10,12);
+  doc.text(`Contact Angle: ${contactAngle}°`,10,22);
+  doc.text(`Head Stability: ${Math.round(headScore)}%`,10,30);
+  frames.forEach((img,i)=>{
+    if(i%4===0&&i>0) doc.addPage();
+    doc.addImage(img,"JPEG",10,38+(i%4)*45,90,35);
+    doc.text(`Frame ${i+1}`,105,55+(i%4)*45);
+  });
+  doc.save("Avaloka_Batting_Report.pdf");
+};
+</script>
+
+</body>
+</html>
