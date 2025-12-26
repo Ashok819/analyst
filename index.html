@@ -1,176 +1,75 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Elite Biomechanics Mobile Engine</title>
-  
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Avaloka Live – Split View</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
   <style>
-    :root { --neon-green: #00ff41; --bg-dark: #0a0a0a; }
-    body { margin: 0; background: var(--bg-dark); color: var(--neon-green); font-family: 'Segoe UI', sans-serif; overflow: hidden; }
-    
-    /* Mobile-Friendly Header */
-    #header { height: 60px; background: #111; display: flex; justify-content: space-between; align-items: center; padding: 0 15px; border-bottom: 2px solid var(--neon-green); }
-    
-    /* Main Viewport */
-    #viewport { position: relative; width: 100vw; height: calc(100vh - 160px); background: #000; }
-    canvas { width: 100%; height: 100%; object-fit: contain; }
-    
-    /* Floating Stats for Mobile */
-    #stats_overlay { position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.8); padding: 10px; border: 1px solid var(--neon-green); border-radius: 8px; font-size: 12px; z-index: 5; }
-    .val { color: white; font-size: 18px; font-weight: bold; }
+    body {
+      margin: 0;
+      background: white;
+      font-family: system-ui, sans-serif;
+    }
 
-    /* Thumb-Friendly Buttons */
-    #controls { height: 100px; display: flex; justify-content: space-around; align-items: center; background: #111; }
-    .btn { background: var(--neon-green); color: black; border: none; padding: 15px 25px; font-weight: bold; border-radius: 8px; font-size: 14px; text-transform: uppercase; cursor: pointer; }
-    .btn-red { background: #ff3e3e; color: white; }
+    .container {
+      display: flex;
+      flex-direction: row;
+      height: 100vh;
+    }
+
+    .panel {
+      flex: 1;
+      position: relative;
+    }
+
+    video, canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    #feedback {
+      position: fixed;
+      bottom: 10px;
+      width: 100%;
+      text-align: center;
+      font-size: 18px;
+      font-weight: bold;
+      color: black;
+    }
+
+    /* Mobile */
+    @media (max-width: 768px) {
+      .container {
+        flex-direction: column;
+      }
+      .panel {
+        height: 50vh;
+      }
+    }
   </style>
 </head>
+
 <body>
+  <div class="container">
+    <!-- LEFT: ORIGINAL VIDEO -->
+    <div class="panel">
+      <video id="video" playsinline></video>
+    </div>
 
-<div id="header">
-  <div style="font-weight: bold; letter-spacing: 1px;">BIO-SCAN MOBILE</div>
-  <div id="status" style="font-size: 12px; color: white;">CALIBRATING...</div>
-</div>
-
-<div id="viewport">
-  <video id="input_video" style="display:none;" playsinline></video>
-  <canvas id="output_canvas"></canvas>
-  
-  <div id="stats_overlay">
-    <div>HEAD STABILITY</div>
-    <div id="stab_score" class="val">100%</div>
-    <div style="margin-top:8px;">PEAK SPEED</div>
-    <div id="vel_val" class="val">0.0 m/s</div>
+    <!-- RIGHT: SKELETON VIEW -->
+    <div class="panel">
+      <canvas id="canvas"></canvas>
+    </div>
   </div>
-</div>
 
-<div id="controls">
-  <button class="btn" onclick="resetCalibration()">RESET HEAD</button>
-  <button class="btn btn-red" onclick="generatePDF()">GENERATE PDF</button>
-</div>
+  <div id="feedback">Initializing…</div>
 
-<script type="module">
-  const { jsPDF } = window.jspdf;
-  const videoElement = document.getElementById('input_video');
-  const canvasElement = document.getElementById('output_canvas');
-  const canvasCtx = canvasElement.getContext('2d');
-
-  let baseHead = null;
-  let metrics = { score: 100, drift: 0, maxVel: 0 };
-  let lastWristPos = null;
-  let lastTime = Date.now();
-
-  function onResults(results) {
-    if (!results.poseLandmarks) return;
-    
-    // Set canvas size to match video aspect ratio
-    canvasElement.width = videoElement.videoWidth;
-    canvasElement.height = videoElement.videoHeight;
-
-    canvasCtx.save();
-    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-    const nose = results.poseLandmarks[0];
-    const rWrist = results.poseLandmarks[16];
-
-    // 1. HEAD STABILITY LOGIC
-    if (!baseHead) baseHead = { x: nose.x, y: nose.y };
-    
-    const dy = Math.abs(nose.y - baseHead.y) * 180; // Scale approx to cm
-    metrics.drift = dy;
-    metrics.score = Math.max(0, 100 - (dy * 6));
-
-    // 2. VELOCITY LOGIC
-    const now = Date.now();
-    if (lastWristPos) {
-      const dt = (now - lastTime) / 1000;
-      const dist = Math.sqrt(Math.pow(rWrist.x - lastWristPos.x, 2) + Math.pow(rWrist.y - lastWristPos.y, 2));
-      const vel = (dist * 2.2) / dt; // m/s scale
-      if (vel > metrics.maxVel) metrics.maxVel = vel;
-    }
-    lastWristPos = {x: rWrist.x, y: rWrist.y};
-    lastTime = now;
-
-    // UPDATE UI
-    document.getElementById('stab_score').innerText = metrics.score.toFixed(0) + "%";
-    document.getElementById('vel_val').innerText = metrics.maxVel.toFixed(1) + " m/s";
-    document.getElementById('status').innerText = metrics.score > 90 ? "STABLE" : "MOVING";
-
-    // 3. DRAW BO-B STYLE SKELETON
-    drawVisuals(results.poseLandmarks);
-    
-    canvasCtx.restore();
-  }
-
-  function drawVisuals(landmarks) {
-    // Head Anchor Box
-    canvasCtx.strokeStyle = metrics.score > 90 ? '#00ff41' : '#ff3e3e';
-    canvasCtx.lineWidth = 4;
-    canvasCtx.strokeRect((baseHead.x-0.04)*canvasElement.width, (baseHead.y-0.04)*canvasElement.height, 0.08*canvasElement.width, 0.08*canvasElement.height);
-
-    // Skeleton Lines
-    canvasCtx.strokeStyle = 'white';
-    canvasCtx.lineWidth = 2;
-    const connections = [[11,12], [11,13], [13,15], [12,14], [14,16], [11,23], [12,24], [23,24]];
-    connections.forEach(([i, j]) => {
-      canvasCtx.beginPath();
-      canvasCtx.moveTo(landmarks[i].x * canvasElement.width, landmarks[i].y * canvasElement.height);
-      canvasCtx.lineTo(landmarks[j].x * canvasElement.width, landmarks[j].y * canvasElement.height);
-      canvasCtx.stroke();
-    });
-  }
-
-  window.resetCalibration = () => { baseHead = null; metrics.maxVel = 0; };
-
-  window.generatePDF = function() {
-    const doc = new jsPDF('p', 'mm', 'a4');
-    doc.setFillColor(10, 10, 10);
-    doc.rect(0, 0, 210, 297, 'F');
-    
-    doc.setTextColor(0, 255, 65);
-    doc.setFontSize(22);
-    doc.text("BIOMECHANICAL PERFORMANCE REPORT", 20, 30);
-    
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(14);
-    doc.text(`Head Stability Score: ${metrics.score.toFixed(1)}%`, 20, 50);
-    doc.text(`Peak Impact Velocity: ${metrics.maxVel.toFixed(2)} m/s`, 20, 60);
-    doc.text(`Vertical Displacement: ${metrics.drift.toFixed(1)} cm`, 20, 70);
-
-    const imgData = canvasElement.toDataURL('image/jpeg', 0.8);
-    doc.addImage(imgData, 'JPEG', 20, 90, 170, 100);
-    
-    doc.setFontSize(10);
-    doc.text("Generated by Bio-Scan Mobile Engine - Analysis of Head Stability & Kinetic Chain", 20, 200);
-    
-    doc.save("Biomechanics_Report.pdf");
-  };
-
-  const pose = new Pose({
-    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-  });
-
-  pose.setOptions({
-    modelComplexity: 0, // Lite for Mobile
-    smoothLandmarks: true,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
-  });
-
-  pose.onResults(onResults);
-
-  const camera = new Camera(videoElement, {
-    onFrame: async () => { await pose.send({image: videoElement}); },
-    width: 1280, height: 720,
-    facingMode: "environment" // Uses Back Camera
-  });
-  camera.start();
-</script>
+  <script src="main.js"></script>
 </body>
 </html>
