@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Avaloka Live – Batting Biomechanics</title>
+<title>Avaloka – Angle Analysis</title>
 
 <!-- MediaPipe -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
@@ -13,7 +13,7 @@
 <style>
   body {
     margin: 0;
-    background: #f5f6fa;
+    background: #f4f6fb;
     font-family: system-ui, -apple-system;
     overflow: hidden;
     touch-action: none;
@@ -22,20 +22,20 @@
   .container {
     display: flex;
     height: 100vh;
-    padding: 12px;
-    gap: 12px;
+    padding: 8px;
+    gap: 8px;
   }
 
   .panel {
     background: #fff;
-    border-radius: 18px;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    border-radius: 14px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
     position: relative;
     overflow: hidden;
   }
 
-  .skeleton-panel { flex: 7; }
-  .video-panel { flex: 3; max-height: 35vh; }
+  .skeleton-panel { flex: 8; }
+  .video-panel { flex: 2; max-height: 28vh; }
 
   video, canvas {
     width: 100%;
@@ -43,24 +43,45 @@
     object-fit: cover;
   }
 
+  /* Angle cards */
+  .angles {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    display: grid;
+    grid-template-columns: repeat(2, auto);
+    gap: 6px;
+  }
+
+  .card {
+    background: rgba(255,255,255,0.95);
+    padding: 6px 10px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+  }
+
+  .green { color: #0a9d44; }
+  .orange { color: #e67e22; }
+  .red { color: #d63031; }
+
   #feedback {
     position: absolute;
-    bottom: 14px;
+    bottom: 8px;
     left: 50%;
     transform: translateX(-50%);
-    padding: 8px 18px;
-    background: rgba(255,255,255,0.95);
-    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 13px;
     font-weight: 600;
-    font-size: 15px;
-    color: #111;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    background: rgba(255,255,255,0.95);
+    border-radius: 16px;
   }
 
   @media (max-width: 768px) {
     .container { flex-direction: column; }
-    .skeleton-panel { flex: 6; }
-    .video-panel { flex: 4; }
+    .skeleton-panel { flex: 7; }
+    .video-panel { flex: 3; }
   }
 </style>
 </head>
@@ -68,13 +89,17 @@
 <body>
 <div class="container">
 
-  <!-- MAIN ANALYSIS -->
+  <!-- MAIN PANEL -->
   <div class="panel skeleton-panel">
     <canvas id="canvas"></canvas>
+
+    <!-- ANGLE UI -->
+    <div class="angles" id="angleCards"></div>
+
     <div id="feedback">Stand still – calibrating…</div>
   </div>
 
-  <!-- LIVE VIDEO -->
+  <!-- VIDEO -->
   <div class="panel video-panel">
     <video id="video" playsinline></video>
   </div>
@@ -82,10 +107,11 @@
 </div>
 
 <script>
-/* ================== SETUP ================== */
+/* ================= BASIC SETUP ================= */
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const angleCards = document.getElementById("angleCards");
 const feedback = document.getElementById("feedback");
 
 function resizeCanvas() {
@@ -95,7 +121,7 @@ function resizeCanvas() {
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
-/* ================== ANGLE UTILS ================== */
+/* ================= ANGLE MATH ================= */
 function angle360(p1, p2) {
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
@@ -104,22 +130,24 @@ function angle360(p1, p2) {
   return a;
 }
 
+function normalize90(a) {
+  a = a % 180;
+  if (a > 90) a = 180 - a;
+  return Math.abs(a);
+}
+
 function center(a, b) {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
-/* ================== CALIBRATION ================== */
-let baselineHead = null;
-let calStart = Date.now();
-const CAL_TIME = 2000;
+/* ================= COLOR RULE ================= */
+function colorClass(v, g, y) {
+  if (v <= g) return "green";
+  if (v <= y) return "orange";
+  return "red";
+}
 
-/* ================== CONTACT DETECTION ================== */
-let prevBatAngle = null;
-let prevTime = performance.now();
-let maxBatSpeed = 0;
-let contactCaptured = false;
-
-/* ================== POSE ================== */
+/* ================= POSE ================= */
 const pose = new Pose({
   locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
 });
@@ -133,7 +161,7 @@ pose.setOptions({
 
 pose.onResults(onResults);
 
-/* ================== CAMERA ================== */
+/* ================= CAMERA ================= */
 const camera = new Camera(video, {
   facingMode: "environment",
   onFrame: async () => {
@@ -142,126 +170,58 @@ const camera = new Camera(video, {
 });
 camera.start();
 
-/* ================== DRAW HELPERS ================== */
-function drawVerticalLine(x) {
-  ctx.strokeStyle = "#999";
-  ctx.setLineDash([8,8]);
-  ctx.beginPath();
-  ctx.moveTo(x * canvas.width, 0);
-  ctx.lineTo(x * canvas.width, canvas.height);
-  ctx.stroke();
-  ctx.setLineDash([]);
-}
+/* ================= CALIBRATION ================= */
+let calibrated = false;
+let calStart = Date.now();
 
-function drawHorizontalLine(y) {
-  ctx.strokeStyle = "#999";
-  ctx.setLineDash([8,8]);
-  ctx.beginPath();
-  ctx.moveTo(0, y * canvas.height);
-  ctx.lineTo(canvas.width, y * canvas.height);
-  ctx.stroke();
-  ctx.setLineDash([]);
-}
-
-/* ================== MAIN LOOP ================== */
+/* ================= MAIN LOOP ================= */
 function onResults(results) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!results.poseLandmarks) return;
 
   const lm = results.poseLandmarks;
 
-  /* Skeleton */
   drawConnectors(ctx, lm, POSE_CONNECTIONS, {
     color: "#0066ff",
     lineWidth: 3,
   });
 
-  /* Head box */
-  const headPts = [0,1,2,7,8].map(i => lm[i]);
-  const minX = Math.min(...headPts.map(p => p.x));
-  const maxX = Math.max(...headPts.map(p => p.x));
-  const minY = Math.min(...headPts.map(p => p.y));
-  const maxY = Math.max(...headPts.map(p => p.y));
-
-  ctx.strokeStyle = "#00aa00";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(
-    minX * canvas.width,
-    minY * canvas.height,
-    (maxX - minX) * canvas.width,
-    (maxY - minY) * canvas.height
-  );
-
-  const headCenter = { x:(minX+maxX)/2, y:(minY+maxY)/2 };
-
-  /* Calibration */
-  if (!baselineHead) {
-    if (Date.now() - calStart > CAL_TIME) {
-      baselineHead = headCenter;
-      feedback.innerText = "Calibration complete ✅";
+  if (!calibrated) {
+    if (Date.now() - calStart > 1500) {
+      calibrated = true;
+      feedback.innerText = "Live angles";
     } else {
       feedback.innerText = "Stand still – calibrating…";
       return;
     }
   }
 
-  /* Reference lines */
   const hipCenter = center(lm[23], lm[24]);
-  drawVerticalLine(hipCenter.x);
-  drawHorizontalLine(hipCenter.y);
+  const shoulderCenter = center(lm[11], lm[12]);
 
-  /* Head drift */
-  const headDrift = Math.hypot(
-    headCenter.x - baselineHead.x,
-    headCenter.y - baselineHead.y
-  );
+  const angles = {
+    Head: normalize90(angle360(lm[7], lm[8])),
+    Torso: normalize90(Math.abs(angle360(hipCenter, shoulderCenter) - 270)),
+    Shoulder: normalize90(angle360(lm[11], lm[12])),
+    Hip: normalize90(angle360(lm[23], lm[24])),
+    Separation: normalize90(
+      Math.abs(angle360(lm[11], lm[12]) - angle360(lm[23], lm[24]))
+    ),
+    UpperArm: normalize90(
+      Math.abs(angle360(lm[11], lm[13]) - angle360(hipCenter, lm[11]))
+    ),
+    Forearm: normalize90(
+      Math.abs(angle360(lm[13], lm[15]) - angle360(lm[11], lm[13]))
+    ),
+    Bat: normalize90(Math.abs(angle360(lm[15], lm[16]) - 270)),
+  };
 
-  /* ================== CONTACT DETECTION ================== */
-  const topWrist = lm[15];
-  const bottomWrist = lm[16];
-  const batAngle = angle360(topWrist, bottomWrist);
-
-  const now = performance.now();
-  const dt = (now - prevTime) / 1000;
-  let batSpeed = 0;
-
-  if (prevBatAngle !== null) {
-    batSpeed = Math.abs(batAngle - prevBatAngle) / dt;
-  }
-
-  prevBatAngle = batAngle;
-  prevTime = now;
-
-  if (!contactCaptured && batSpeed > maxBatSpeed && headDrift < 0.01) {
-    maxBatSpeed = batSpeed;
-    contactCaptured = true;
-
-    /* ================== CONTACT ANGLES ================== */
-    const shoulderCenter = center(lm[11], lm[12]);
-
-    const angles = {
-      batAngle: angle360(lm[15], lm[16]),
-      forearmAngle: angle360(lm[13], lm[15]),
-      upperArmAngle: angle360(lm[11], lm[13]),
-      torsoLeanAngle: angle360(hipCenter, shoulderCenter),
-      shoulderAngle: angle360(lm[11], lm[12]),
-      hipAngle: angle360(lm[23], lm[24]),
-      separationAngle: Math.abs(
-        angle360(lm[11], lm[12]) - angle360(lm[23], lm[24])
-      ),
-      headTiltAngle: angle360(lm[7], lm[8]),
-    };
-
-    console.clear();
-    console.log("🏏 BALL CONTACT – ANGLES");
-    console.table(angles);
-
-    feedback.innerText = "Contact detected ✅ (check console)";
-  }
-
-  if (!contactCaptured) {
-    feedback.innerText =
-      headDrift > 0.02 ? "Keep head still" : "Swing…";
+  angleCards.innerHTML = "";
+  for (const k in angles) {
+    const v = angles[k].toFixed(0);
+    const cls = colorClass(v, 10, 20);
+    angleCards.innerHTML +=
+      `<div class="card ${cls}">${k}: ${v}°</div>`;
   }
 }
 </script>
