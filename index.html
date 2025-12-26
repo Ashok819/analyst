@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Avaloka – Angle Analysis</title>
+<title>Avaloka – 3 Card Analysis</title>
 
 <!-- MediaPipe -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
@@ -13,217 +13,187 @@
 <style>
   body {
     margin: 0;
-    background: #f4f6fb;
+    background: #eef1f6;
     font-family: system-ui, -apple-system;
-    overflow: hidden;
     touch-action: none;
   }
 
-  .container {
-    display: flex;
+  .layout {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 10px;
+    padding: 10px;
     height: 100vh;
-    padding: 8px;
-    gap: 8px;
   }
 
-  .panel {
-    background: #fff;
+  .card {
+    background: white;
     border-radius: 14px;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.1);
     position: relative;
     overflow: hidden;
   }
 
-  .skeleton-panel { flex: 8; }
-  .video-panel { flex: 2; max-height: 28vh; }
-
-  video, canvas {
+  canvas, video {
     width: 100%;
     height: 100%;
     object-fit: cover;
   }
 
-  /* Angle cards */
-  .angles {
+  .title {
     position: absolute;
-    top: 10px;
+    top: 8px;
     left: 10px;
-    display: grid;
-    grid-template-columns: repeat(2, auto);
-    gap: 6px;
-  }
-
-  .card {
-    background: rgba(255,255,255,0.95);
-    padding: 6px 10px;
-    border-radius: 10px;
     font-size: 13px;
-    font-weight: 600;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+    font-weight: 700;
+    opacity: 0.7;
   }
 
+  /* DATA CARD */
+  .data {
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .row { margin-bottom: 8px; }
   .green { color: #0a9d44; }
   .orange { color: #e67e22; }
   .red { color: #d63031; }
 
-  #feedback {
-    position: absolute;
-    bottom: 8px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 6px 14px;
-    font-size: 13px;
-    font-weight: 600;
-    background: rgba(255,255,255,0.95);
-    border-radius: 16px;
-  }
-
-  @media (max-width: 768px) {
-    .container { flex-direction: column; }
-    .skeleton-panel { flex: 7; }
-    .video-panel { flex: 3; }
+  /* MOBILE */
+  @media (max-width: 900px) {
+    .layout {
+      grid-template-columns: 1fr;
+      grid-template-rows: 2fr 1fr 1fr;
+    }
   }
 </style>
 </head>
 
 <body>
-<div class="container">
 
-  <!-- MAIN PANEL -->
-  <div class="panel skeleton-panel">
+<div class="layout">
+
+  <!-- CARD 1: SKELETON -->
+  <div class="card">
+    <div class="title">Skeleton + Angles</div>
     <canvas id="canvas"></canvas>
-
-    <!-- ANGLE UI -->
-    <div class="angles" id="angleCards"></div>
-
-    <div id="feedback">Stand still – calibrating…</div>
   </div>
 
-  <!-- VIDEO -->
-  <div class="panel video-panel">
+  <!-- CARD 2: CAMERA -->
+  <div class="card">
+    <div class="title">Live Camera</div>
     <video id="video" playsinline></video>
+  </div>
+
+  <!-- CARD 3: DATA -->
+  <div class="card data" id="dataCard">
+    <div class="title">Data</div>
+    <div class="row">Waiting for pose…</div>
   </div>
 
 </div>
 
 <script>
-/* ================= BASIC SETUP ================= */
+/* ---------- BASIC ---------- */
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const angleCards = document.getElementById("angleCards");
-const feedback = document.getElementById("feedback");
+const dataCard = document.getElementById("dataCard");
 
-function resizeCanvas() {
+function resize() {
   canvas.width = canvas.clientWidth;
   canvas.height = canvas.clientHeight;
 }
-window.addEventListener("resize", resizeCanvas);
-resizeCanvas();
+window.addEventListener("resize", resize);
+resize();
 
-/* ================= ANGLE MATH ================= */
+/* ---------- ANGLES ---------- */
 function angle360(p1, p2) {
-  const dx = p2.x - p1.x;
-  const dy = p2.y - p1.y;
-  let a = Math.atan2(dy, dx) * 180 / Math.PI;
+  let a = Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
   if (a < 0) a += 360;
   return a;
 }
-
 function normalize90(a) {
   a = a % 180;
   if (a > 90) a = 180 - a;
   return Math.abs(a);
 }
+function center(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
 
-function center(a, b) {
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-}
-
-/* ================= COLOR RULE ================= */
-function colorClass(v, g, y) {
-  if (v <= g) return "green";
-  if (v <= y) return "orange";
+function color(v) {
+  if (v <= 10) return "green";
+  if (v <= 20) return "orange";
   return "red";
 }
 
-/* ================= POSE ================= */
+/* ---------- POSE ---------- */
 const pose = new Pose({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
 });
 
 pose.setOptions({
   modelComplexity: 1,
   smoothLandmarks: true,
   minDetectionConfidence: 0.6,
-  minTrackingConfidence: 0.6,
+  minTrackingConfidence: 0.6
 });
 
 pose.onResults(onResults);
 
-/* ================= CAMERA ================= */
+/* ---------- CAMERA ---------- */
 const camera = new Camera(video, {
   facingMode: "environment",
   onFrame: async () => {
     await pose.send({ image: video });
-  },
+  }
 });
 camera.start();
 
-/* ================= CALIBRATION ================= */
-let calibrated = false;
-let calStart = Date.now();
+/* ---------- DRAW LABEL ---------- */
+function drawLabel(text, x, y, c) {
+  ctx.fillStyle = c;
+  ctx.font = "13px system-ui";
+  ctx.fillText(text, x * canvas.width + 6, y * canvas.height - 6);
+}
 
-/* ================= MAIN LOOP ================= */
-function onResults(results) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (!results.poseLandmarks) return;
+/* ---------- MAIN ---------- */
+function onResults(res) {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  if (!res.poseLandmarks) return;
 
-  const lm = results.poseLandmarks;
+  const lm = res.poseLandmarks;
+  drawConnectors(ctx, lm, POSE_CONNECTIONS, { color:"#0077ff", lineWidth:3 });
 
-  drawConnectors(ctx, lm, POSE_CONNECTIONS, {
-    color: "#0066ff",
-    lineWidth: 3,
-  });
-
-  if (!calibrated) {
-    if (Date.now() - calStart > 1500) {
-      calibrated = true;
-      feedback.innerText = "Live angles";
-    } else {
-      feedback.innerText = "Stand still – calibrating…";
-      return;
-    }
-  }
-
-  const hipCenter = center(lm[23], lm[24]);
-  const shoulderCenter = center(lm[11], lm[12]);
+  const hipC = center(lm[23], lm[24]);
+  const shoulderC = center(lm[11], lm[12]);
 
   const angles = {
     Head: normalize90(angle360(lm[7], lm[8])),
-    Torso: normalize90(Math.abs(angle360(hipCenter, shoulderCenter) - 270)),
-    Shoulder: normalize90(angle360(lm[11], lm[12])),
+    Torso: normalize90(Math.abs(angle360(hipC, shoulderC) - 270)),
     Hip: normalize90(angle360(lm[23], lm[24])),
-    Separation: normalize90(
-      Math.abs(angle360(lm[11], lm[12]) - angle360(lm[23], lm[24]))
-    ),
-    UpperArm: normalize90(
-      Math.abs(angle360(lm[11], lm[13]) - angle360(hipCenter, lm[11]))
-    ),
-    Forearm: normalize90(
-      Math.abs(angle360(lm[13], lm[15]) - angle360(lm[11], lm[13]))
-    ),
-    Bat: normalize90(Math.abs(angle360(lm[15], lm[16]) - 270)),
+    Shoulder: normalize90(angle360(lm[11], lm[12])),
+    Arm: normalize90(Math.abs(angle360(lm[11], lm[13]) - angle360(hipC, lm[11]))),
+    Bat: normalize90(Math.abs(angle360(lm[15], lm[16]) - 270))
   };
 
-  angleCards.innerHTML = "";
-  for (const k in angles) {
-    const v = angles[k].toFixed(0);
-    const cls = colorClass(v, 10, 20);
-    angleCards.innerHTML +=
-      `<div class="card ${cls}">${k}: ${v}°</div>`;
-  }
+  /* Draw on skeleton */
+  drawLabel(`Head ${angles.Head}°`, lm[0].x, lm[0].y, color(angles.Head));
+  drawLabel(`Torso ${angles.Torso}°`, shoulderC.x, shoulderC.y, color(angles.Torso));
+  drawLabel(`Bat ${angles.Bat}°`, lm[16].x, lm[16].y, color(angles.Bat));
+
+  /* Data card */
+  dataCard.innerHTML = `
+    <div class="row ${color(angles.Head)}">Head: ${angles.Head}°</div>
+    <div class="row ${color(angles.Torso)}">Torso: ${angles.Torso}°</div>
+    <div class="row ${color(angles.Hip)}">Hip: ${angles.Hip}°</div>
+    <div class="row ${color(angles.Shoulder)}">Shoulder: ${angles.Shoulder}°</div>
+    <div class="row ${color(angles.Arm)}">Arm: ${angles.Arm}°</div>
+    <div class="row ${color(angles.Bat)}">Bat: ${angles.Bat}°</div>
+  `;
 }
 </script>
+
 </body>
 </html>
