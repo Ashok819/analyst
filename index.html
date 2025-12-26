@@ -1,193 +1,176 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Avaloka – Batting Analysis</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Elite Biomechanics Mobile Engine</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
-<!-- MediaPipe -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+  <style>
+    :root { --neon-green: #00ff41; --bg-dark: #0a0a0a; }
+    body { margin: 0; background: var(--bg-dark); color: var(--neon-green); font-family: 'Segoe UI', sans-serif; overflow: hidden; }
+    
+    /* Mobile-Friendly Header */
+    #header { height: 60px; background: #111; display: flex; justify-content: space-between; align-items: center; padding: 0 15px; border-bottom: 2px solid var(--neon-green); }
+    
+    /* Main Viewport */
+    #viewport { position: relative; width: 100vw; height: calc(100vh - 160px); background: #000; }
+    canvas { width: 100%; height: 100%; object-fit: contain; }
+    
+    /* Floating Stats for Mobile */
+    #stats_overlay { position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.8); padding: 10px; border: 1px solid var(--neon-green); border-radius: 8px; font-size: 12px; z-index: 5; }
+    .val { color: white; font-size: 18px; font-weight: bold; }
 
-<!-- PDF -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-
-<style>
-body{margin:0;background:#020617;color:#fff;font-family:system-ui}
-#stage{height:100vh;display:flex;align-items:center;justify-content:center}
-canvas{max-width:100%;max-height:100%}
-video{display:none}
-
-#ui{
-  position:fixed;bottom:0;left:0;right:0;
-  background:#0f172a;padding:10px;
-  display:flex;gap:8px;flex-wrap:wrap
-}
-.stat{flex:1;min-width:120px}
-.stat span{font-size:11px;color:#94a3b8}
-.stat b{font-size:18px;color:#00f2ff}
-button,input{
-  flex:1;padding:12px;border:none;border-radius:8px;
-  font-weight:600;font-size:14px
-}
-button{background:#00f2ff;color:#000}
-</style>
+    /* Thumb-Friendly Buttons */
+    #controls { height: 100px; display: flex; justify-content: space-around; align-items: center; background: #111; }
+    .btn { background: var(--neon-green); color: black; border: none; padding: 15px 25px; font-weight: bold; border-radius: 8px; font-size: 14px; text-transform: uppercase; cursor: pointer; }
+    .btn-red { background: #ff3e3e; color: white; }
+  </style>
 </head>
-
 <body>
 
-<div id="stage">
-  <video id="video" muted playsinline></video>
-  <canvas id="canvas"></canvas>
+<div id="header">
+  <div style="font-weight: bold; letter-spacing: 1px;">BIO-SCAN MOBILE</div>
+  <div id="status" style="font-size: 12px; color: white;">CALIBRATING...</div>
 </div>
 
-<div id="ui">
-  <div class="stat">
-    <span>Contact Angle</span><br>
-    <b id="angle">--</b>
+<div id="viewport">
+  <video id="input_video" style="display:none;" playsinline></video>
+  <canvas id="output_canvas"></canvas>
+  
+  <div id="stats_overlay">
+    <div>HEAD STABILITY</div>
+    <div id="stab_score" class="val">100%</div>
+    <div style="margin-top:8px;">PEAK SPEED</div>
+    <div id="vel_val" class="val">0.0 m/s</div>
   </div>
-  <div class="stat">
-    <span>Head Stability</span><br>
-    <b id="head">--</b>
-  </div>
-
-  <button id="cam">🎥 Analyze</button>
-  <input type="file" id="upload" accept="video/*">
-  <button id="pdf">📄 Download PDF</button>
 </div>
 
-<script>
-/* ---------- ELEMENTS ---------- */
-const video=document.getElementById("video");
-const canvas=document.getElementById("canvas");
-const ctx=canvas.getContext("2d");
+<div id="controls">
+  <button class="btn" onclick="resetCalibration()">RESET HEAD</button>
+  <button class="btn btn-red" onclick="generatePDF()">GENERATE PDF</button>
+</div>
 
-/* ---------- STATE ---------- */
-let lastResults=null,isLive=false;
-let wristY=[],headPos=[];
-let contactAngle=null,headScore=0;
-let frames=[],capturing=false;
-let lastCap=0;
+<script type="module">
+  const { jsPDF } = window.jspdf;
+  const videoElement = document.getElementById('input_video');
+  const canvasElement = document.getElementById('output_canvas');
+  const canvasCtx = canvasElement.getContext('2d');
 
-/* ---------- CONSTANTS ---------- */
-const CAPTURE_INTERVAL=120;
-const MAX_FRAMES=10;
+  let baseHead = null;
+  let metrics = { score: 100, drift: 0, maxVel: 0 };
+  let lastWristPos = null;
+  let lastTime = Date.now();
 
-/* ---------- MEDIAPIPE ---------- */
-const pose=new Pose({
-  locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
-});
-pose.setOptions({modelComplexity:1,smoothLandmarks:true});
-pose.onResults(r=>lastResults=r);
+  function onResults(results) {
+    if (!results.poseLandmarks) return;
+    
+    // Set canvas size to match video aspect ratio
+    canvasElement.width = videoElement.videoWidth;
+    canvasElement.height = videoElement.videoHeight;
 
-/* ---------- HELPERS ---------- */
-function angle(a,b,c){
-  const r=Math.atan2(c.y-b.y,c.x-b.x)-Math.atan2(a.y-b.y,a.x-b.x);
-  let d=Math.abs(r*180/Math.PI);
-  return Math.round(d>180?360-d:d);
-}
-function drawRedLine(x){
-  ctx.strokeStyle="#ef4444";
-  ctx.setLineDash([6,6]);
-  ctx.beginPath();
-  ctx.moveTo(x*canvas.width,0);
-  ctx.lineTo(x*canvas.width,canvas.height);
-  ctx.stroke(); ctx.setLineDash([]);
-}
+    canvasCtx.save();
+    canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-/* ---------- RENDER ---------- */
-function render(){
-  if(video.paused&&!isLive) return;
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    const nose = results.poseLandmarks[0];
+    const rWrist = results.poseLandmarks[16];
 
-  if(lastResults?.poseLandmarks){
-    const lm=lastResults.poseLandmarks;
-    drawConnectors(ctx,lm,POSE_CONNECTIONS,{color:"#00f2ff"});
-    drawLandmarks(ctx,lm,{color:"#fff",radius:2});
-    analyse(lm);
-  }
+    // 1. HEAD STABILITY LOGIC
+    if (!baseHead) baseHead = { x: nose.x, y: nose.y };
+    
+    const dy = Math.abs(nose.y - baseHead.y) * 180; // Scale approx to cm
+    metrics.drift = dy;
+    metrics.score = Math.max(0, 100 - (dy * 6));
 
-  if(capturing){
-    const now=performance.now();
-    if(now-lastCap>CAPTURE_INTERVAL&&frames.length<MAX_FRAMES){
-      frames.push(canvas.toDataURL("image/jpeg",0.7));
-      lastCap=now;
+    // 2. VELOCITY LOGIC
+    const now = Date.now();
+    if (lastWristPos) {
+      const dt = (now - lastTime) / 1000;
+      const dist = Math.sqrt(Math.pow(rWrist.x - lastWristPos.x, 2) + Math.pow(rWrist.y - lastWristPos.y, 2));
+      const vel = (dist * 2.2) / dt; // m/s scale
+      if (vel > metrics.maxVel) metrics.maxVel = vel;
     }
+    lastWristPos = {x: rWrist.x, y: rWrist.y};
+    lastTime = now;
+
+    // UPDATE UI
+    document.getElementById('stab_score').innerText = metrics.score.toFixed(0) + "%";
+    document.getElementById('vel_val').innerText = metrics.maxVel.toFixed(1) + " m/s";
+    document.getElementById('status').innerText = metrics.score > 90 ? "STABLE" : "MOVING";
+
+    // 3. DRAW BO-B STYLE SKELETON
+    drawVisuals(results.poseLandmarks);
+    
+    canvasCtx.restore();
   }
-  requestAnimationFrame(render);
-}
 
-/* ---------- ANALYSIS ---------- */
-function analyse(lm){
-  const sh=lm[12],el=lm[14],wr=lm[16],hd=lm[0];
-  drawRedLine(lm[31].x); // front foot
+  function drawVisuals(landmarks) {
+    // Head Anchor Box
+    canvasCtx.strokeStyle = metrics.score > 90 ? '#00ff41' : '#ff3e3e';
+    canvasCtx.lineWidth = 4;
+    canvasCtx.strokeRect((baseHead.x-0.04)*canvasElement.width, (baseHead.y-0.04)*canvasElement.height, 0.08*canvasElement.width, 0.08*canvasElement.height);
 
-  // Head stability
-  headPos.push({x:hd.x,y:hd.y});
-  if(headPos.length>10) headPos.shift();
-  const avg=headPos.reduce((a,p)=>({x:a.x+p.x,y:a.y+p.y}),{x:0,y:0});
-  avg.x/=headPos.length; avg.y/=headPos.length;
-  headScore=Math.max(0,100-(Math.hypot(hd.x-avg.x,hd.y-avg.y)*900));
-  document.getElementById("head").innerText=Math.round(headScore)+"%";
-
-  // Contact detection
-  wristY.push(wr.y); if(wristY.length>6) wristY.shift();
-  if(wristY.length===6&&Math.abs(wristY[5]-wristY[0])<0.01){
-    contactAngle=angle(sh,el,wr);
-    document.getElementById("angle").innerText=contactAngle+"°";
-    startCapture();
+    // Skeleton Lines
+    canvasCtx.strokeStyle = 'white';
+    canvasCtx.lineWidth = 2;
+    const connections = [[11,12], [11,13], [13,15], [12,14], [14,16], [11,23], [12,24], [23,24]];
+    connections.forEach(([i, j]) => {
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(landmarks[i].x * canvasElement.width, landmarks[i].y * canvasElement.height);
+      canvasCtx.lineTo(landmarks[j].x * canvasElement.width, landmarks[j].y * canvasElement.height);
+      canvasCtx.stroke();
+    });
   }
-}
-function startCapture(){
-  if(!capturing){
-    frames=[];capturing=true;lastCap=0;
-    setTimeout(()=>capturing=false,1200);
-  }
-}
 
-/* ---------- INPUT ---------- */
-document.getElementById("cam").onclick=async()=>{
-  isLive=true;
-  const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-  video.srcObject=s; video.play();
-  video.onloadedmetadata=()=>{
-    canvas.width=video.videoWidth;
-    canvas.height=video.videoHeight;
-    render(); aiLoop();
+  window.resetCalibration = () => { baseHead = null; metrics.maxVel = 0; };
+
+  window.generatePDF = function() {
+    const doc = new jsPDF('p', 'mm', 'a4');
+    doc.setFillColor(10, 10, 10);
+    doc.rect(0, 0, 210, 297, 'F');
+    
+    doc.setTextColor(0, 255, 65);
+    doc.setFontSize(22);
+    doc.text("BIOMECHANICAL PERFORMANCE REPORT", 20, 30);
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(14);
+    doc.text(`Head Stability Score: ${metrics.score.toFixed(1)}%`, 20, 50);
+    doc.text(`Peak Impact Velocity: ${metrics.maxVel.toFixed(2)} m/s`, 20, 60);
+    doc.text(`Vertical Displacement: ${metrics.drift.toFixed(1)} cm`, 20, 70);
+
+    const imgData = canvasElement.toDataURL('image/jpeg', 0.8);
+    doc.addImage(imgData, 'JPEG', 20, 90, 170, 100);
+    
+    doc.setFontSize(10);
+    doc.text("Generated by Bio-Scan Mobile Engine - Analysis of Head Stability & Kinetic Chain", 20, 200);
+    
+    doc.save("Biomechanics_Report.pdf");
   };
-};
-document.getElementById("upload").onchange=e=>{
-  video.srcObject=null;
-  video.src=URL.createObjectURL(e.target.files[0]);
-  video.play();
-  video.onloadedmetadata=()=>{
-    canvas.width=video.videoWidth;
-    canvas.height=video.videoHeight;
-    render(); aiLoop();
-  };
-};
-async function aiLoop(){
-  while(!video.paused||isLive){
-    await pose.send({image:video});
-    await new Promise(r=>setTimeout(r,40));
-  }
-}
 
-/* ---------- PDF ---------- */
-document.getElementById("pdf").onclick=()=>{
-  if(!frames.length) return alert("No contact captured");
-  const doc=new jspdf.jsPDF();
-  doc.text("AVALOKA – BATTING REPORT",10,12);
-  doc.text(`Contact Angle: ${contactAngle}°`,10,22);
-  doc.text(`Head Stability: ${Math.round(headScore)}%`,10,30);
-  frames.forEach((img,i)=>{
-    if(i%4===0&&i>0) doc.addPage();
-    doc.addImage(img,"JPEG",10,38+(i%4)*45,90,35);
-    doc.text(`Frame ${i+1}`,105,55+(i%4)*45);
+  const pose = new Pose({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
   });
-  doc.save("Avaloka_Batting_Report.pdf");
-};
-</script>
 
+  pose.setOptions({
+    modelComplexity: 0, // Lite for Mobile
+    smoothLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+
+  pose.onResults(onResults);
+
+  const camera = new Camera(videoElement, {
+    onFrame: async () => { await pose.send({image: videoElement}); },
+    width: 1280, height: 720,
+    facingMode: "environment" // Uses Back Camera
+  });
+  camera.start();
+</script>
 </body>
 </html>
