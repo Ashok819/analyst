@@ -1,210 +1,269 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Avaloka Live – Balance Engine</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Avaloka Live – Batting Biomechanics</title>
 
-  <!-- MediaPipe -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
-  <style>
-    body {
-      margin: 0;
-      background: #f5f6fa;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont;
-      overflow: hidden;
-      touch-action: none;
-    }
+<style>
+  body {
+    margin: 0;
+    background: #f5f6fa;
+    font-family: system-ui, -apple-system;
+    overflow: hidden;
+    touch-action: none;
+  }
 
-    .container {
-      display: flex;
-      height: 100vh;
-      padding: 12px;
-      gap: 12px;
-    }
+  .container {
+    display: flex;
+    height: 100vh;
+    padding: 12px;
+    gap: 12px;
+  }
 
-    .panel {
-      background: white;
-      border-radius: 18px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.08);
-      overflow: hidden;
-      position: relative;
-    }
+  .panel {
+    background: #fff;
+    border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    position: relative;
+    overflow: hidden;
+  }
 
-    /* Skeleton main panel */
-    .skeleton-panel {
-      flex: 7;
-    }
+  .skeleton-panel { flex: 7; }
+  .video-panel { flex: 3; max-height: 35vh; }
 
-    /* Video smaller panel */
-    .video-panel {
-      flex: 3;
-      max-height: 35vh;
-    }
+  video, canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
 
-    video, canvas {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
+  #feedback {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 18px;
+    background: rgba(255,255,255,0.95);
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 15px;
+    color: #111;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+  }
 
-    #feedback {
-      position: absolute;
-      bottom: 14px;
-      left: 50%;
-      transform: translateX(-50%);
-      padding: 8px 18px;
-      background: rgba(255,255,255,0.95);
-      border-radius: 20px;
-      font-weight: 600;
-      font-size: 15px;
-      color: #111;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-    }
-
-    /* Mobile */
-    @media (max-width: 768px) {
-      .container {
-        flex-direction: column;
-      }
-      .skeleton-panel { flex: 6; }
-      .video-panel { flex: 4; }
-    }
-  </style>
+  @media (max-width: 768px) {
+    .container { flex-direction: column; }
+    .skeleton-panel { flex: 6; }
+    .video-panel { flex: 4; }
+  }
+</style>
 </head>
 
 <body>
-  <div class="container">
+<div class="container">
 
-    <!-- MAIN: SKELETON + ANALYSIS -->
-    <div class="panel skeleton-panel">
-      <canvas id="canvas"></canvas>
-      <div id="feedback">Stand still – calibrating…</div>
-    </div>
-
-    <!-- SECONDARY: LIVE VIDEO -->
-    <div class="panel video-panel">
-      <video id="video" playsinline></video>
-    </div>
-
+  <!-- MAIN ANALYSIS -->
+  <div class="panel skeleton-panel">
+    <canvas id="canvas"></canvas>
+    <div id="feedback">Stand still – calibrating…</div>
   </div>
 
-  <script>
-    const video = document.getElementById("video");
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-    const feedbackBox = document.getElementById("feedback");
+  <!-- LIVE VIDEO -->
+  <div class="panel video-panel">
+    <video id="video" playsinline></video>
+  </div>
 
-    function resizeCanvas() {
-      canvas.width = canvas.clientWidth;
-      canvas.height = canvas.clientHeight;
+</div>
+
+<script>
+/* ================== SETUP ================== */
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const feedback = document.getElementById("feedback");
+
+function resizeCanvas() {
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+/* ================== ANGLE UTILS ================== */
+function angle360(p1, p2) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  let a = Math.atan2(dy, dx) * 180 / Math.PI;
+  if (a < 0) a += 360;
+  return a;
+}
+
+function center(a, b) {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+/* ================== CALIBRATION ================== */
+let baselineHead = null;
+let calStart = Date.now();
+const CAL_TIME = 2000;
+
+/* ================== CONTACT DETECTION ================== */
+let prevBatAngle = null;
+let prevTime = performance.now();
+let maxBatSpeed = 0;
+let contactCaptured = false;
+
+/* ================== POSE ================== */
+const pose = new Pose({
+  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
+});
+
+pose.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.6,
+});
+
+pose.onResults(onResults);
+
+/* ================== CAMERA ================== */
+const camera = new Camera(video, {
+  facingMode: "environment",
+  onFrame: async () => {
+    await pose.send({ image: video });
+  },
+});
+camera.start();
+
+/* ================== DRAW HELPERS ================== */
+function drawVerticalLine(x) {
+  ctx.strokeStyle = "#999";
+  ctx.setLineDash([8,8]);
+  ctx.beginPath();
+  ctx.moveTo(x * canvas.width, 0);
+  ctx.lineTo(x * canvas.width, canvas.height);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawHorizontalLine(y) {
+  ctx.strokeStyle = "#999";
+  ctx.setLineDash([8,8]);
+  ctx.beginPath();
+  ctx.moveTo(0, y * canvas.height);
+  ctx.lineTo(canvas.width, y * canvas.height);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+/* ================== MAIN LOOP ================== */
+function onResults(results) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!results.poseLandmarks) return;
+
+  const lm = results.poseLandmarks;
+
+  /* Skeleton */
+  drawConnectors(ctx, lm, POSE_CONNECTIONS, {
+    color: "#0066ff",
+    lineWidth: 3,
+  });
+
+  /* Head box */
+  const headPts = [0,1,2,7,8].map(i => lm[i]);
+  const minX = Math.min(...headPts.map(p => p.x));
+  const maxX = Math.max(...headPts.map(p => p.x));
+  const minY = Math.min(...headPts.map(p => p.y));
+  const maxY = Math.max(...headPts.map(p => p.y));
+
+  ctx.strokeStyle = "#00aa00";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(
+    minX * canvas.width,
+    minY * canvas.height,
+    (maxX - minX) * canvas.width,
+    (maxY - minY) * canvas.height
+  );
+
+  const headCenter = { x:(minX+maxX)/2, y:(minY+maxY)/2 };
+
+  /* Calibration */
+  if (!baselineHead) {
+    if (Date.now() - calStart > CAL_TIME) {
+      baselineHead = headCenter;
+      feedback.innerText = "Calibration complete ✅";
+    } else {
+      feedback.innerText = "Stand still – calibrating…";
+      return;
     }
-    window.addEventListener("resize", resizeCanvas);
-    resizeCanvas();
+  }
 
-    /* -------- Calibration -------- */
-    let baselineHead = null;
-    let calibrationStart = Date.now();
-    const CAL_TIME = 2000;
+  /* Reference lines */
+  const hipCenter = center(lm[23], lm[24]);
+  drawVerticalLine(hipCenter.x);
+  drawHorizontalLine(hipCenter.y);
 
-    /* -------- Pose -------- */
-    const pose = new Pose({
-      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
-    });
+  /* Head drift */
+  const headDrift = Math.hypot(
+    headCenter.x - baselineHead.x,
+    headCenter.y - baselineHead.y
+  );
 
-    pose.setOptions({
-      modelComplexity: 1,
-      smoothLandmarks: true,
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6,
-    });
+  /* ================== CONTACT DETECTION ================== */
+  const topWrist = lm[15];
+  const bottomWrist = lm[16];
+  const batAngle = angle360(topWrist, bottomWrist);
 
-    pose.onResults(onResults);
+  const now = performance.now();
+  const dt = (now - prevTime) / 1000;
+  let batSpeed = 0;
 
-    /* -------- Camera -------- */
-    const camera = new Camera(video, {
-      onFrame: async () => {
-        await pose.send({ image: video });
-      },
-      facingMode: "environment",
-    });
-    camera.start();
+  if (prevBatAngle !== null) {
+    batSpeed = Math.abs(batAngle - prevBatAngle) / dt;
+  }
 
-    /* -------- Draw helpers -------- */
-    function drawGravityLine(x) {
-      ctx.strokeStyle = "#999";
-      ctx.setLineDash([8, 8]);
-      ctx.beginPath();
-      ctx.moveTo(x * canvas.width, 0);
-      ctx.lineTo(x * canvas.width, canvas.height);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
+  prevBatAngle = batAngle;
+  prevTime = now;
 
-    /* -------- Main Loop -------- */
-    function onResults(results) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!contactCaptured && batSpeed > maxBatSpeed && headDrift < 0.01) {
+    maxBatSpeed = batSpeed;
+    contactCaptured = true;
 
-      if (!results.poseLandmarks) return;
-      const lm = results.poseLandmarks;
+    /* ================== CONTACT ANGLES ================== */
+    const shoulderCenter = center(lm[11], lm[12]);
 
-      /* Skeleton */
-      drawConnectors(ctx, lm, POSE_CONNECTIONS, {
-        color: "#0066ff",
-        lineWidth: 3,
-      });
+    const angles = {
+      batAngle: angle360(lm[15], lm[16]),
+      forearmAngle: angle360(lm[13], lm[15]),
+      upperArmAngle: angle360(lm[11], lm[13]),
+      torsoLeanAngle: angle360(hipCenter, shoulderCenter),
+      shoulderAngle: angle360(lm[11], lm[12]),
+      hipAngle: angle360(lm[23], lm[24]),
+      separationAngle: Math.abs(
+        angle360(lm[11], lm[12]) - angle360(lm[23], lm[24])
+      ),
+      headTiltAngle: angle360(lm[7], lm[8]),
+    };
 
-      /* Head Bounding Box */
-      const headIds = [0,1,2,7,8];
-      const pts = headIds.map(i => lm[i]);
+    console.clear();
+    console.log("🏏 BALL CONTACT – ANGLES");
+    console.table(angles);
 
-      const minX = Math.min(...pts.map(p => p.x));
-      const maxX = Math.max(...pts.map(p => p.x));
-      const minY = Math.min(...pts.map(p => p.y));
-      const maxY = Math.max(...pts.map(p => p.y));
+    feedback.innerText = "Contact detected ✅ (check console)";
+  }
 
-      ctx.strokeStyle = "#00aa00";
-      ctx.lineWidth = 3;
-      ctx.strokeRect(
-        minX * canvas.width,
-        minY * canvas.height,
-        (maxX - minX) * canvas.width,
-        (maxY - minY) * canvas.height
-      );
-
-      const headCenter = {
-        x: (minX + maxX) / 2,
-        y: (minY + maxY) / 2,
-      };
-
-      /* Calibration */
-      if (!baselineHead) {
-        if (Date.now() - calibrationStart > CAL_TIME) {
-          baselineHead = headCenter;
-          feedbackBox.innerText = "Calibration complete ✅";
-        } else {
-          feedbackBox.innerText = "Stand still – calibrating…";
-          return;
-        }
-      }
-
-      /* Head Drift */
-      const headDrift = Math.hypot(
-        headCenter.x - baselineHead.x,
-        headCenter.y - baselineHead.y
-      );
-
-      /* Gravity line through hips */
-      const hipX = (lm[23].x + lm[24].x) / 2;
-      drawGravityLine(hipX);
-
-      /* Feedback */
-      feedbackBox.innerText =
-        headDrift > 0.02 ? "Keep head still" : "Good balance 👍";
-    }
-  </script>
+  if (!contactCaptured) {
+    feedback.innerText =
+      headDrift > 0.02 ? "Keep head still" : "Swing…";
+  }
+}
+</script>
 </body>
 </html>
