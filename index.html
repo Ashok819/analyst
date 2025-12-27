@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Avaloka Yoga</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+    video, canvas {
+      width: 100%;
+      max-width: 420px;
+      border-radius: 12px;
+      margin-top: 10px;
+    }
+    button {
+      margin-top: 12px;
+      padding: 12px 18px;
+      font-size: 15px;
+      border: none;
+      border-radius: 10px;
+      background: #4caf50;
+      color: white;
+    }
+    #info {
+      margin-top: 8px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+
+<h3>🧘 Avaloka Yoga</h3>
+
+<button onclick="startCamera()">▶ Start Camera</button>
+
+<br>
+
+<video id="video" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
+
+<div id="info">Waiting for camera…</div>
+
+<script>
+/* ===============================
+   ELEMENTS
+================================ */
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const info = document.getElementById("info");
+
+/* ===============================
+   ANGLE FUNCTION
+================================ */
+function angle(a, b, c) {
+  const ab = { x: a.x - b.x, y: a.y - b.y };
+  const cb = { x: c.x - b.x, y: c.y - b.y };
+  const dot = ab.x * cb.x + ab.y * cb.y;
+  const mag = Math.hypot(ab.x, ab.y) * Math.hypot(cb.x, cb.y);
+  return Math.acos(dot / mag) * (180 / Math.PI);
+}
+
+/* ===============================
+   MEDIAPIPE POSE
+================================ */
+const pose = new Pose.Pose({
+  locateFile: file =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+});
+
+pose.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+
+pose.onResults(results => {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+  if (!results.poseLandmarks) return;
+
+  drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS,
+    { color: "#00ff00", lineWidth: 3 });
+  drawLandmarks(ctx, results.poseLandmarks,
+    { color: "#ff0000", radius: 3 });
+
+  const lm = results.poseLandmarks;
+
+  const kneeAngle = angle(lm[23], lm[25], lm[27]);
+  info.innerText = `Knee Angle: ${kneeAngle.toFixed(1)}°`;
+});
+
+/* ===============================
+   CAMERA START (USER CLICK)
+================================ */
+function startCamera() {
+  navigator.mediaDevices.getUserMedia({ video: true })
+    .then(stream => {
+      video.srcObject = stream;
+      video.play();
+
+      video.onloadeddata = () => {
+        info.innerText = "Camera started";
+        processFrame();
+      };
+    })
+    .catch(err => {
+      alert("Camera error: " + err.message);
+    });
+}
+
+/* ===============================
+   FRAME LOOP
+================================ */
+async function processFrame() {
+  await pose.send({ image: video });
+  requestAnimationFrame(processFrame);
+}
+</script>
+
+</body>
+</html>
