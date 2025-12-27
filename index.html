@@ -1,198 +1,156 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Avaloka – 3 Card Analysis</title>
+  <meta charset="UTF-8" />
+  <title>Avaloka Yoga</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<!-- MediaPipe -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <!-- MediaPipe -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
-<style>
-  body {
-    margin: 0;
-    background: #eef1f6;
-    font-family: system-ui, -apple-system;
-    touch-action: none;
-  }
-
-  .layout {
-    display: grid;
-    grid-template-columns: 2fr 1fr 1fr;
-    gap: 10px;
-    padding: 10px;
-    height: 100vh;
-  }
-
-  .card {
-    background: white;
-    border-radius: 14px;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.1);
-    position: relative;
-    overflow: hidden;
-  }
-
-  canvas, video {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .title {
-    position: absolute;
-    top: 8px;
-    left: 10px;
-    font-size: 13px;
-    font-weight: 700;
-    opacity: 0.7;
-  }
-
-  /* DATA CARD */
-  .data {
-    padding: 12px;
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .row { margin-bottom: 8px; }
-  .green { color: #0a9d44; }
-  .orange { color: #e67e22; }
-  .red { color: #d63031; }
-
-  /* MOBILE */
-  @media (max-width: 900px) {
-    .layout {
-      grid-template-columns: 1fr;
-      grid-template-rows: 2fr 1fr 1fr;
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
     }
-  }
-</style>
+    video, canvas {
+      width: 100%;
+      max-width: 480px;
+      border-radius: 12px;
+    }
+    #angles {
+      margin-top: 10px;
+      font-size: 14px;
+    }
+    button {
+      margin: 8px;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      background: #4caf50;
+      color: #fff;
+      font-size: 14px;
+    }
+  </style>
 </head>
 
 <body>
 
-<div class="layout">
+  <h3>🧘 Avaloka Yoga</h3>
 
-  <!-- CARD 1: SKELETON -->
-  <div class="card">
-    <div class="title">Skeleton + Angles</div>
-    <canvas id="canvas"></canvas>
-  </div>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
 
-  <!-- CARD 2: CAMERA -->
-  <div class="card">
-    <div class="title">Live Camera</div>
-    <video id="video" playsinline></video>
-  </div>
+  <div id="angles">Angles will appear here</div>
 
-  <!-- CARD 3: DATA -->
-  <div class="card data" id="dataCard">
-    <div class="title">Data</div>
-    <div class="row">Waiting for pose…</div>
-  </div>
-
-</div>
+  <button onclick="voiceEnabled=!voiceEnabled">
+    🔊 Toggle Voice
+  </button>
 
 <script>
-/* ---------- BASIC ---------- */
+/* ===============================
+   VIDEO & CANVAS
+================================ */
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const dataCard = document.getElementById("dataCard");
+const angleBox = document.getElementById("angles");
 
-function resize() {
-  canvas.width = canvas.clientWidth;
-  canvas.height = canvas.clientHeight;
-}
-window.addEventListener("resize", resize);
-resize();
+let voiceEnabled = true;
+let lastSpoken = 0;
+const VOICE_DELAY = 3000;
 
-/* ---------- ANGLES ---------- */
-function angle360(p1, p2) {
-  let a = Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
-  if (a < 0) a += 360;
-  return a;
-}
-function normalize90(a) {
-  a = a % 180;
-  if (a > 90) a = 180 - a;
-  return Math.abs(a);
-}
-function center(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
+/* ===============================
+   VOICE ENGINE
+================================ */
+function speak(text) {
+  if (!voiceEnabled) return;
+  const now = Date.now();
+  if (now - lastSpoken < VOICE_DELAY) return;
 
-function color(v) {
-  if (v <= 10) return "green";
-  if (v <= 20) return "orange";
-  return "red";
+  const msg = new SpeechSynthesisUtterance(text);
+  msg.rate = 0.85;
+  msg.pitch = 1;
+  msg.volume = 1;
+
+  speechSynthesis.cancel();
+  speechSynthesis.speak(msg);
+  lastSpoken = now;
 }
 
-/* ---------- POSE ---------- */
-const pose = new Pose({
-  locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+/* ===============================
+   ANGLE CALCULATION
+================================ */
+function angle(a, b, c) {
+  const ab = { x: a.x - b.x, y: a.y - b.y };
+  const cb = { x: c.x - b.x, y: c.y - b.y };
+  const dot = ab.x * cb.x + ab.y * cb.y;
+  const mag = Math.hypot(ab.x, ab.y) * Math.hypot(cb.x, cb.y);
+  return Math.acos(dot / mag) * (180 / Math.PI);
+}
+
+/* ===============================
+   MEDIAPIPE POSE
+================================ */
+const pose = new Pose.Pose({
+  locateFile: file =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
 });
 
 pose.setOptions({
   modelComplexity: 1,
   smoothLandmarks: true,
-  minDetectionConfidence: 0.6,
-  minTrackingConfidence: 0.6
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
 });
 
-pose.onResults(onResults);
+pose.onResults(results => {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
 
-/* ---------- CAMERA ---------- */
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+  if (!results.poseLandmarks) return;
+
+  drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS,
+    { color: "#00ff00", lineWidth: 3 });
+  drawLandmarks(ctx, results.poseLandmarks,
+    { color: "#ff0000", radius: 3 });
+
+  const lm = results.poseLandmarks;
+
+  const kneeAngle = angle(
+    lm[23], // hip
+    lm[25], // knee
+    lm[27]  // ankle
+  );
+
+  angleBox.innerText =
+    `Knee Angle: ${kneeAngle.toFixed(1)}°`;
+
+  if (kneeAngle < 150) {
+    speak("Straighten your leg");
+  }
+});
+
+/* ===============================
+   CAMERA
+================================ */
 const camera = new Camera(video, {
-  facingMode: "environment",
   onFrame: async () => {
     await pose.send({ image: video });
-  }
+  },
+  width: 480,
+  height: 640
 });
 camera.start();
 
-/* ---------- DRAW LABEL ---------- */
-function drawLabel(text, x, y, c) {
-  ctx.fillStyle = c;
-  ctx.font = "13px system-ui";
-  ctx.fillText(text, x * canvas.width + 6, y * canvas.height - 6);
-}
-
-/* ---------- MAIN ---------- */
-function onResults(res) {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  if (!res.poseLandmarks) return;
-
-  const lm = res.poseLandmarks;
-  drawConnectors(ctx, lm, POSE_CONNECTIONS, { color:"#0077ff", lineWidth:3 });
-
-  const hipC = center(lm[23], lm[24]);
-  const shoulderC = center(lm[11], lm[12]);
-
-  const angles = {
-    Head: normalize90(angle360(lm[7], lm[8])),
-    Torso: normalize90(Math.abs(angle360(hipC, shoulderC) - 270)),
-    Hip: normalize90(angle360(lm[23], lm[24])),
-    Shoulder: normalize90(angle360(lm[11], lm[12])),
-    Arm: normalize90(Math.abs(angle360(lm[11], lm[13]) - angle360(hipC, lm[11]))),
-    Bat: normalize90(Math.abs(angle360(lm[15], lm[16]) - 270))
-  };
-
-  /* Draw on skeleton */
-  drawLabel(`Head ${angles.Head}°`, lm[0].x, lm[0].y, color(angles.Head));
-  drawLabel(`Torso ${angles.Torso}°`, shoulderC.x, shoulderC.y, color(angles.Torso));
-  drawLabel(`Bat ${angles.Bat}°`, lm[16].x, lm[16].y, color(angles.Bat));
-
-  /* Data card */
-  dataCard.innerHTML = `
-    <div class="row ${color(angles.Head)}">Head: ${angles.Head}°</div>
-    <div class="row ${color(angles.Torso)}">Torso: ${angles.Torso}°</div>
-    <div class="row ${color(angles.Hip)}">Hip: ${angles.Hip}°</div>
-    <div class="row ${color(angles.Shoulder)}">Shoulder: ${angles.Shoulder}°</div>
-    <div class="row ${color(angles.Arm)}">Arm: ${angles.Arm}°</div>
-    <div class="row ${color(angles.Bat)}">Bat: ${angles.Bat}°</div>
-  `;
-}
 </script>
 
 </body>
