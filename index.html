@@ -1,137 +1,164 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8">
-  <title>Avaloka Yoga</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- MediaPipe -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-
+  <title>Avaloka Brain v1</title>
   <style>
     body {
-      margin: 0;
-      background: #111;
-      color: #fff;
-      font-family: Arial, sans-serif;
-      text-align: center;
-    }
-    video, canvas {
-      width: 100%;
-      max-width: 420px;
-      border-radius: 12px;
-      margin-top: 10px;
+      font-family: system-ui, Arial, sans-serif;
+      background: #f4f6f8;
+      padding: 20px;
     }
     button {
-      margin-top: 12px;
-      padding: 12px 18px;
-      font-size: 15px;
-      border: none;
-      border-radius: 10px;
-      background: #4caf50;
-      color: white;
+      padding: 10px 16px;
+      font-size: 16px;
+      cursor: pointer;
     }
-    #info {
-      margin-top: 8px;
-      font-size: 14px;
+    pre {
+      background: #111;
+      color: #0f0;
+      padding: 15px;
+      margin-top: 15px;
+      min-height: 80px;
+      white-space: pre-wrap;
     }
   </style>
 </head>
-
 <body>
 
-<h3>🧘 Avaloka Yoga</h3>
+<h2>🧠 Avaloka Brain (Single File)</h2>
+<p>Click to simulate camera seeing a <b>chair</b>.</p>
 
-<button onclick="startCamera()">▶ Start Camera</button>
+<button onclick="runBrain()">Analyze Object</button>
 
-<br>
-
-<video id="video" autoplay playsinline muted></video>
-<canvas id="canvas"></canvas>
-
-<div id="info">Waiting for camera…</div>
+<pre id="output"></pre>
 
 <script>
-/* ===============================
-   ELEMENTS
-================================ */
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const info = document.getElementById("info");
+/* =========================
+   1. PERCEPTION (Eyes)
+   ========================= */
+function perceive() {
+  // This will later come from camera / CV
+  return {
+    object: "chair",
 
-/* ===============================
-   ANGLE FUNCTION
-================================ */
-function angle(a, b, c) {
-  const ab = { x: a.x - b.x, y: a.y - b.y };
-  const cb = { x: c.x - b.x, y: c.y - b.y };
-  const dot = ab.x * cb.x + ab.y * cb.y;
-  const mag = Math.hypot(ab.x, ab.y) * Math.hypot(cb.x, cb.y);
-  return Math.acos(dot / mag) * (180 / Math.PI);
+    shape: {
+      lines: 12,
+      flatSurface: true
+    },
+
+    support: {
+      contactPoints: 4
+    },
+
+    balance: {
+      centerInsideBase: true
+    },
+
+    motion: {
+      moving: false
+    },
+
+    forces: {
+      push: false
+    }
+  };
 }
 
-/* ===============================
-   MEDIAPIPE POSE
-================================ */
-const pose = new Pose.Pose({
-  locateFile: file =>
-    `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-});
+/* =========================
+   2. RULES (Reasoning)
+   ========================= */
+const rules = [
 
-pose.setOptions({
-  modelComplexity: 1,
-  smoothLandmarks: true,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5
-});
+  {
+    priority: 5,
+    when: s => s.object === "chair",
+    then: () => "I see a chair."
+  },
 
-pose.onResults(results => {
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  {
+    priority: 4,
+    when: s => s.shape.lines > 4,
+    then: () => "This object is made of straight lines."
+  },
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+  {
+    priority: 4,
+    when: s => s.shape.flatSurface,
+    then: () => "It has a flat surface."
+  },
 
-  if (!results.poseLandmarks) return;
+  {
+    priority: 3,
+    when: s => s.support.contactPoints >= 4,
+    then: () => "It touches the ground at multiple points."
+  },
 
-  drawConnectors(ctx, results.poseLandmarks, POSE_CONNECTIONS,
-    { color: "#00ff00", lineWidth: 3 });
-  drawLandmarks(ctx, results.poseLandmarks,
-    { color: "#ff0000", radius: 3 });
+  {
+    priority: 3,
+    when: s => s.support.contactPoints >= 4 &&
+               s.balance.centerInsideBase,
+    then: () => "It is stable because weight is spread evenly."
+  },
 
-  const lm = results.poseLandmarks;
+  {
+    priority: 2,
+    when: s => !s.motion.moving,
+    then: () => "The object is still."
+  },
 
-  const kneeAngle = angle(lm[23], lm[25], lm[27]);
-  info.innerText = `Knee Angle: ${kneeAngle.toFixed(1)}°`;
-});
+  {
+    priority: 1,
+    when: s => s.forces.push,
+    then: () => "A push can make it move or fall."
+  }
+];
 
-/* ===============================
-   CAMERA START (USER CLICK)
-================================ */
-function startCamera() {
-  navigator.mediaDevices.getUserMedia({ video: true })
-    .then(stream => {
-      video.srcObject = stream;
-      video.play();
+/* =========================
+   3. ATTENTION (Focus)
+   ========================= */
+function selectFocus(insights) {
+  // sort by importance
+  insights.sort((a, b) => b.priority - a.priority);
 
-      video.onloadeddata = () => {
-        info.innerText = "Camera started";
-        processFrame();
-      };
-    })
-    .catch(err => {
-      alert("Camera error: " + err.message);
-    });
+  // talk about only top ideas
+  return insights.slice(0, 2);
 }
 
-/* ===============================
-   FRAME LOOP
-================================ */
-async function processFrame() {
-  await pose.send({ image: video });
-  requestAnimationFrame(processFrame);
+/* =========================
+   4. TEACHER (Explain)
+   ========================= */
+function teach(messages) {
+  return messages
+    .map(m => "🗣️ " + m.text)
+    .join("\n");
+}
+
+/* =========================
+   5. BRAIN LOOP
+   ========================= */
+function runBrain() {
+  const output = document.getElementById("output");
+
+  // SEE
+  const state = perceive();
+
+  // THINK
+  const insights = [];
+  for (const rule of rules) {
+    if (rule.when(state)) {
+      insights.push({
+        priority: rule.priority,
+        text: rule.then(state)
+      });
+    }
+  }
+
+  // FOCUS
+  const focused = selectFocus(insights);
+
+  // TEACH
+  output.textContent = teach(focused);
 }
 </script>
 
