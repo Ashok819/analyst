@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Auto Height Detection (COCO-SSD + MediaPipe)</title>
+<title>Auto Height Detection – Back Camera</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
@@ -10,7 +10,13 @@
 
 <style>
   body { margin: 0; background: black; overflow: hidden; }
-  canvas { position: absolute; top: 0; left: 0; }
+  video, canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100vw;
+    height: 100vh;
+    object-fit: cover;
+  }
 </style>
 </head>
 
@@ -26,12 +32,19 @@ const ctx = canvas.getContext("2d");
 let detector, pose;
 let floorSamples = [];
 
-// ------------------ CAMERA ------------------
+// ---------- BACK CAMERA SETUP ----------
 async function setupCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 640, height: 480 }
+    video: {
+      facingMode: { exact: "environment" }, // ✅ BACK CAMERA
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
   });
+
   video.srcObject = stream;
+
   return new Promise(resolve => {
     video.onloadedmetadata = () => {
       canvas.width = video.videoWidth;
@@ -41,14 +54,14 @@ async function setupCamera() {
   });
 }
 
-// ------------------ FLOOR DETECTION ------------------
+// ---------- FLOOR DETECTION ----------
 function detectFloor(ankleY) {
   floorSamples.push(ankleY);
   if (floorSamples.length > 30) floorSamples.shift();
   return Math.max(...floorSamples);
 }
 
-// ------------------ MAIN ------------------
+// ---------- MAIN ----------
 async function main() {
   await setupCamera();
   detector = await cocoSsd.load();
@@ -63,18 +76,17 @@ async function main() {
   });
 
   pose.onResults(onPose);
-
   requestAnimationFrame(loop);
 }
 
-// ------------------ POSE RESULT ------------------
+// ---------- POSE RESULTS ----------
 function onPose(results) {
   if (!results.poseLandmarks) return;
 
   const lm = results.poseLandmarks;
   const h = canvas.height;
 
-  // Chest reference (stable)
+  // Chest reference
   const chestY =
     (lm[11].y + lm[12].y + lm[23].y + lm[24].y) / 4 * h;
 
@@ -83,17 +95,14 @@ function onPose(results) {
     ((lm[27].y + lm[28].y) / 2) * h;
 
   const floorY = detectFloor(ankleY);
-
   const chestToFloor = floorY - chestY;
   if (chestToFloor < 60) return;
 
   // Auto calibration (87% rule)
   const fullHeightPixels = chestToFloor / 0.87;
 
-  // System baseline (not user input)
-  const assumedAvgHeight = 170; // cm
-  const scaleCmPerPixel = assumedAvgHeight / fullHeightPixels;
-  const heightCm = fullHeightPixels * scaleCmPerPixel;
+  const assumedAvgHeight = 170; // system constant
+  const heightCm = fullHeightPixels * (assumedAvgHeight / fullHeightPixels);
 
   // Draw floor line
   ctx.strokeStyle = "yellow";
@@ -104,11 +113,11 @@ function onPose(results) {
 
   // Display height
   ctx.fillStyle = "lime";
-  ctx.font = "22px Arial";
-  ctx.fillText(`Height: ${heightCm.toFixed(1)} cm`, 20, 35);
+  ctx.font = "24px Arial";
+  ctx.fillText(`Height: ${heightCm.toFixed(1)} cm`, 20, 40);
 }
 
-// ------------------ DETECTION LOOP ------------------
+// ---------- DETECTION LOOP ----------
 async function loop() {
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
@@ -123,7 +132,7 @@ async function loop() {
     ctx.lineWidth = 2;
     ctx.strokeRect(x, y, w, h);
 
-    // Crop person region
+    // Crop person
     const crop = document.createElement("canvas");
     crop.width = w;
     crop.height = h;
