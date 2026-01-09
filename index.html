@@ -2,150 +2,127 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Auto Height Detection – Back Camera</title>
+<title>Avaloka Meditation</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 
 <style>
-  body { margin: 0; background: black; overflow: hidden; }
-  video, canvas {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100vw;
-    height: 100vh;
-    object-fit: cover;
-  }
+body {
+  margin: 0;
+  background: #000;
+  color: #fff;
+  font-family: system-ui;
+  text-align: center;
+}
+video, canvas {
+  width: 100%;
+}
+#status {
+  position: fixed;
+  bottom: 10px;
+  width: 100%;
+  opacity: 0.6;
+  font-size: 14px;
+}
 </style>
 </head>
 
 <body>
+
 <video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
+<div id="status">Waiting…</div>
 
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const statusEl = document.getElementById("status");
 
-let detector, pose;
-let floorSamples = [];
+let cocoModel, faceModel;
+let sessionStarted = false;
+let silenceStart = null;
+let lastHeadY = null;
 
-// ---------- BACK CAMERA SETUP ----------
-async function setupCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: { exact: "environment" }, // ✅ BACK CAMERA
-      width: { ideal: 1280 },
-      height: { ideal: 720 }
-    },
-    audio: false
-  });
-
-  video.srcObject = stream;
-
-  return new Promise(resolve => {
-    video.onloadedmetadata = () => {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      resolve();
-    };
-  });
+function speak(text) {
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 0.85;
+  u.pitch = 1;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
 }
 
-// ---------- FLOOR DETECTION ----------
-function detectFloor(ankleY) {
-  floorSamples.push(ankleY);
-  if (floorSamples.length > 30) floorSamples.shift();
-  return Math.max(...floorSamples);
-}
+/* Camera (Back if available) */
+navigator.mediaDevices.getUserMedia({
+  video: { facingMode: "environment" }
+}).then(stream => video.srcObject = stream);
 
-// ---------- MAIN ----------
-async function main() {
-  await setupCamera();
-  detector = await cocoSsd.load();
+/* Load Models */
+(async () => {
+  cocoModel = await cocoSsd.load();
 
-  pose = new Pose({
-    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+  faceModel = new FaceMesh({
+    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
   });
 
-  pose.setOptions({
-    modelComplexity: 1,
-    smoothLandmarks: true
+  faceModel.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: true
   });
 
-  pose.onResults(onPose);
-  requestAnimationFrame(loop);
+  faceModel.onResults(onFace);
+})();
+
+/* Face Logic */
+function onFace(res) {
+  if (!res.multiFaceLandmarks) return;
+
+  const face = res.multiFaceLandmarks[0];
+  const leftEye = face[159];
+  const rightEye = face[386];
+
+  const eyesOpen = Math.abs(leftEye.y - rightEye.y) < 0.01;
+
+  if (eyesOpen) {
+    speak("Gently close your eyes");
+  }
 }
 
-// ---------- POSE RESULTS ----------
-function onPose(results) {
-  if (!results.poseLandmarks) return;
+/* Main Loop */
+async function detect() {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
 
-  const lm = results.poseLandmarks;
-  const h = canvas.height;
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
 
-  // Chest reference
-  const chestY =
-    (lm[11].y + lm[12].y + lm[23].y + lm[24].y) / 4 * h;
+  const preds = await cocoModel.detect(video);
+  const person = preds.find(p => p.class === "person");
 
-  // Feet reference
-  const ankleY =
-    ((lm[27].y + lm[28].y) / 2) * h;
-
-  const floorY = detectFloor(ankleY);
-  const chestToFloor = floorY - chestY;
-  if (chestToFloor < 60) return;
-
-  // Auto calibration (87% rule)
-  const fullHeightPixels = chestToFloor / 0.87;
-
-  const assumedAvgHeight = 170; // system constant
-  const heightCm = fullHeightPixels * (assumedAvgHeight / fullHeightPixels);
-
-  // Draw floor line
-  ctx.strokeStyle = "yellow";
-  ctx.beginPath();
-  ctx.moveTo(0, floorY);
-  ctx.lineTo(canvas.width, floorY);
-  ctx.stroke();
-
-  // Display height
-  ctx.fillStyle = "lime";
-  ctx.font = "24px Arial";
-  ctx.fillText(`Height: ${heightCm.toFixed(1)} cm`, 20, 40);
-}
-
-// ---------- DETECTION LOOP ----------
-async function loop() {
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-  const predictions = await detector.detect(video);
-  const person = predictions.find(p => p.class === "person");
-
-  if (person) {
-    const [x, y, w, h] = person.bbox;
-
-    // Draw bounding box
-    ctx.strokeStyle = "red";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, w, h);
-
-    // Crop person
-    const crop = document.createElement("canvas");
-    crop.width = w;
-    crop.height = h;
-    crop.getContext("2d")
-      .drawImage(video, x, y, w, h, 0, 0, w, h);
-
-    await pose.send({ image: crop });
+  if (person && !sessionStarted) {
+    sessionStarted = true;
+    speak("Please sit comfortably in front of the camera");
+    setTimeout(() => speak("Relax your body"), 3000);
+    setTimeout(() => speak("Close your eyes gently"), 6000);
+    setTimeout(() => speak("Breathe in"), 9000);
+    setTimeout(() => speak("Breathe out"), 12000);
+    silenceStart = Date.now();
   }
 
-  requestAnimationFrame(loop);
+  if (sessionStarted) {
+    if (Date.now() - silenceStart > 120000) {
+      statusEl.innerText = "Silent meditation";
+    }
+  }
+
+  await faceModel.send({image: video});
+  requestAnimationFrame(detect);
 }
 
-main();
+detect();
 </script>
+
 </body>
 </html>
