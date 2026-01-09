@@ -1,11 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>Avaloka – Live Analysis</title>
+  <meta charset="UTF-8">
+  <title>Avaloka Yoga – AI Awareness</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <!-- TensorFlow.js -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0"></script>
+  <!-- TensorFlow -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
 
   <!-- COCO SSD -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
@@ -17,139 +18,133 @@
   <style>
     body {
       margin: 0;
-      background: black;
+      background: #0f2027;
       font-family: system-ui;
-      color: #0f0;
+      color: white;
+      text-align: center;
     }
-    video, canvas {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: cover;
+
+    h2 {
+      margin: 10px 0;
     }
-    #overlay {
-      position: fixed;
-      bottom: 0;
-      left: 0;
+
+    #container {
+      position: relative;
       width: 100%;
-      background: rgba(0,0,0,0.7);
-      padding: 12px;
-      font-size: 16px;
+      max-width: 480px;
+      margin: auto;
+    }
+
+    video, canvas {
+      width: 100%;
+      border-radius: 12px;
+    }
+
+    #status {
+      margin: 10px;
+      font-size: 14px;
+      opacity: 0.8;
     }
   </style>
 </head>
 
 <body>
 
-<video id="video" autoplay playsinline muted></video>
-<canvas id="canvas"></canvas>
-<div id="overlay">🧠 Avaloka is watching…</div>
+<h2>Avaloka Yoga – Awareness Mode</h2>
+<div id="status">Loading models…</div>
+
+<div id="container">
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+</div>
 
 <script>
-/* =====================
-   SETUP
-   ===================== */
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const overlay = document.getElementById("overlay");
-
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+const statusEl = document.getElementById("status");
 
 let cocoModel;
 let pose;
 
-/* =====================
-   CAMERA
-   ===================== */
-async function startCamera() {
+async function initCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" },
-    audio: false
+    video: { facingMode: "user" }
   });
   video.srcObject = stream;
-}
-startCamera();
 
-/* =====================
-   LOAD MODELS
-   ===================== */
-(async () => {
+  return new Promise(resolve => {
+    video.onloadedmetadata = () => {
+      video.play();
+      resolve();
+    };
+  });
+}
+
+async function loadModels() {
   cocoModel = await cocoSsd.load();
-  overlay.innerText = "🧠 Models loaded. Analyzing…";
-})();
+  statusEl.innerText = "COCO-SSD loaded";
 
-pose = new Pose({
-  locateFile: file =>
-    `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-});
+  pose = new Pose({
+    locateFile: file =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+  });
 
-pose.setOptions({
-  modelComplexity: 0,
-  smoothLandmarks: true
-});
+  pose.setOptions({
+    modelComplexity: 1,
+    smoothLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
 
-pose.onResults(onPoseResults);
-
-/* =====================
-   PERSON ACTION RULES
-   ===================== */
-function analyzeAction(landmarks) {
-  const hip = landmarks[23];
-  const knee = landmarks[25];
-  const ankle = landmarks[27];
-
-  if (!hip || !knee || !ankle) return "Person detected";
-
-  const kneeAngle = Math.abs(knee.y - hip.y);
-
-  if (kneeAngle < 0.05) return "Standing";
-  if (kneeAngle > 0.15) return "Sitting or bending";
-  return "Moving";
+  pose.onResults(onPoseResults);
 }
 
-/* =====================
-   POSE CALLBACK
-   ===================== */
+async function detect() {
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  /* COCO-SSD → Bounding Box */
+  const predictions = await cocoModel.detect(video);
+  predictions.forEach(p => {
+    if (p.class === "person") {
+      const [x, y, w, h] = p.bbox;
+      ctx.strokeStyle = "#00ffcc";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillText("Presence", x, y - 5);
+    }
+  });
+
+  /* MediaPipe Pose */
+  await pose.send({ image: video });
+
+  requestAnimationFrame(detect);
+}
+
 function onPoseResults(results) {
   if (!results.poseLandmarks) return;
 
-  const action = analyzeAction(results.poseLandmarks);
-  overlay.innerHTML = `🧍 ${action}`;
+  ctx.fillStyle = "#ffcc00";
+
+  results.poseLandmarks.forEach(lm => {
+    ctx.beginPath();
+    ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  });
+
+  statusEl.innerText = "Observing body & presence…";
 }
 
-/* =====================
-   MAIN LOOP
-   ===================== */
-async function analyzeFrame() {
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-  /* ---- COCO SSD ---- */
-  if (cocoModel) {
-    const predictions = await cocoModel.detect(video);
-
-    predictions.forEach(p => {
-      if (p.score > 0.6) {
-        ctx.strokeStyle = "#00ff00";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(...p.bbox);
-
-        ctx.fillStyle = "#00ff00";
-        ctx.fillText(p.class, p.bbox[0], p.bbox[1] - 5);
-      }
-    });
-  }
-
-  /* ---- MEDIAPIPE POSE ---- */
-  await pose.send({ image: video });
-
-  requestAnimationFrame(analyzeFrame);
+async function start() {
+  await initCamera();
+  await loadModels();
+  detect();
 }
 
-analyzeFrame();
+start();
 </script>
 
 </body>
