@@ -5,13 +5,8 @@
 <title>Avaloka Meditation</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<!-- TensorFlow -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-
-<!-- COCO-SSD -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-
-<!-- MediaPipe Pose -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 
 <style>
@@ -22,17 +17,13 @@ body {
   font-family: system-ui;
   text-align: center;
 }
-#container {
-  position: relative;
-}
-video, canvas {
-  width: 100%;
-}
+#container { position: relative; }
+video, canvas { width: 100%; }
 #status {
   position: fixed;
   bottom: 10px;
   width: 100%;
-  opacity: 0.6;
+  opacity: 0.7;
   font-size: 14px;
 }
 </style>
@@ -44,7 +35,7 @@ video, canvas {
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas"></canvas>
 </div>
-<div id="status">Waiting for presence…</div>
+<div id="status">Initializing camera…</div>
 
 <script>
 const video = document.getElementById("video");
@@ -54,104 +45,92 @@ const statusEl = document.getElementById("status");
 
 let cocoModel, poseModel;
 let sessionStarted = false;
-let silenceTimerStarted = false;
-let lastMovement = null;
+let lastHead = null;
 
-/* ===== VOICE ===== */
+/* ---------- Voice ---------- */
 function speak(text) {
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 0.85;
-  u.pitch = 1;
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
 }
 
-/* ===== CAMERA (BACK IF AVAILABLE) ===== */
-navigator.mediaDevices.getUserMedia({
-  video: { facingMode: "environment" }
-}).then(stream => video.srcObject = stream);
+/* ---------- Camera ---------- */
+async function initCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "environment" }
+  });
+  video.srcObject = stream;
+  return new Promise(r => video.onloadedmetadata = r);
+}
 
-/* ===== LOAD MODELS ===== */
-(async () => {
+/* ---------- Load Models ---------- */
+async function loadModels() {
   cocoModel = await cocoSsd.load();
 
   poseModel = new Pose({
-    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+    locateFile: f =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
   });
 
   poseModel.setOptions({
     modelComplexity: 1,
     smoothLandmarks: true,
-    minDetectionConfidence: 0.6,
-    minTrackingConfidence: 0.6
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
   });
 
   poseModel.onResults(onPose);
-})();
+}
 
-/* ===== SKELETON CONNECTIONS ===== */
+/* ---------- Skeleton ---------- */
 const connections = [
-  [11,13],[13,15],
-  [12,14],[14,16],
-  [11,12],
-  [23,24],
+  [11,13],[13,15],[12,14],[14,16],
+  [11,12],[23,24],
   [11,23],[12,24],
-  [23,25],[25,27],
-  [24,26],[26,28]
+  [23,25],[25,27],[24,26],[26,28]
 ];
 
-/* ===== DRAW SKELETON ===== */
 function drawSkeleton(lm) {
   ctx.strokeStyle = "rgba(0,255,200,0.7)";
   ctx.lineWidth = 3;
   connections.forEach(([a,b]) => {
     ctx.beginPath();
-    ctx.moveTo(lm[a].x * canvas.width, lm[a].y * canvas.height);
-    ctx.lineTo(lm[b].x * canvas.width, lm[b].y * canvas.height);
+    ctx.moveTo(lm[a].x*canvas.width, lm[a].y*canvas.height);
+    ctx.lineTo(lm[b].x*canvas.width, lm[b].y*canvas.height);
     ctx.stroke();
-  });
-
-  ctx.fillStyle = "#ffcc00";
-  lm.forEach(p => {
-    ctx.beginPath();
-    ctx.arc(p.x * canvas.width, p.y * canvas.height, 3, 0, Math.PI*2);
-    ctx.fill();
   });
 }
 
-/* ===== POSE RESULTS ===== */
+/* ---------- Pose ---------- */
 function onPose(res) {
   if (!res.poseLandmarks) return;
 
   drawSkeleton(res.poseLandmarks);
 
   const head = res.poseLandmarks[0];
-  if (lastMovement) {
-    const movement =
-      Math.abs(head.x - lastMovement.x) +
-      Math.abs(head.y - lastMovement.y);
-
-    if (movement > 0.02 && sessionStarted) {
+  if (lastHead) {
+    const move = Math.abs(head.x-lastHead.x)+Math.abs(head.y-lastHead.y);
+    if (move > 0.02 && sessionStarted) {
       speak("Relax. Remain still.");
     }
   }
-  lastMovement = head;
+  lastHead = head;
 }
 
-/* ===== MAIN LOOP ===== */
+/* ---------- Main Loop ---------- */
 async function detect() {
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
 
   ctx.drawImage(video,0,0,canvas.width,canvas.height);
 
-  /* COCO-SSD → PERSON BOUNDING BOX */
   const preds = await cocoModel.detect(video);
-  const person = preds.find(p => p.class === "person");
+  const person = preds.find(p => p.class==="person" && p.score > 0.4);
 
   if (person) {
     const [x,y,w,h] = person.bbox;
-    ctx.strokeStyle = "#ffffff";
+    ctx.strokeStyle = "#fff";
     ctx.lineWidth = 2;
     ctx.strokeRect(x,y,w,h);
 
@@ -160,33 +139,29 @@ async function detect() {
       statusEl.innerText = "Meditation started";
 
       speak("Please sit comfortably in front of the camera.");
-      setTimeout(() => speak("Place your hands relaxed, palms upward."), 4000);
-      setTimeout(() => speak("Keep your spine naturally straight."), 8000);
-      setTimeout(() => speak("Close your eyes gently."), 12000);
-      setTimeout(() => speak("Bring attention between the eyebrows."), 16000);
-      setTimeout(() => speak("Breathe in."), 20000);
-      setTimeout(() => speak("Breathe out."), 23000);
-      setTimeout(() => speak("You are not the body."), 27000);
-      setTimeout(() => speak("You are not the mind."), 31000);
-      setTimeout(() => speak("You are pure consciousness."), 35000);
-      setTimeout(() => speak("Just breathe in and breathe out."), 40000);
-
-      setTimeout(() => {
-        silenceTimerStarted = true;
-        statusEl.innerText = "Silent meditation (2 minutes)";
-      }, 45000);
+      setTimeout(()=>speak("Relax your hands, palms upward."),4000);
+      setTimeout(()=>speak("Keep your spine naturally straight."),8000);
+      setTimeout(()=>speak("Close your eyes gently."),12000);
+      setTimeout(()=>speak("Breathe in."),16000);
+      setTimeout(()=>speak("Breathe out."),19000);
+      setTimeout(()=>speak("You are pure consciousness."),23000);
     }
+  } else {
+    if (!sessionStarted) statusEl.innerText = "Waiting for person…";
   }
 
-  if (silenceTimerStarted) {
-    // no voice — silence
-  }
-
-  await poseModel.send({ image: video });
+  await poseModel.send({image: video});
   requestAnimationFrame(detect);
 }
 
-detect();
+/* ---------- Start ---------- */
+(async () => {
+  await initCamera();
+  statusEl.innerText = "Camera ready…";
+  await loadModels();
+  statusEl.innerText = "Models loaded…";
+  detect();
+})();
 </script>
 
 </body>
