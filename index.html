@@ -1,200 +1,150 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Avaloka Meditation</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <title>Avaloka Yoga – AI Awareness</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<!-- TensorFlow + Models -->
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+  <!-- TensorFlow -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
 
-<style>
-body {
-  margin: 0;
-  background: #000;
-  color: #fff;
-  font-family: system-ui;
-  text-align: center;
-}
-video, canvas {
-  width: 100%;
-}
-#status {
-  position: fixed;
-  bottom: 90px;
-  width: 100%;
-  font-size: 14px;
-  opacity: 0.7;
-}
-#startBtn {
-  position: fixed;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 16px 40px;
-  font-size: 18px;
-  border-radius: 40px;
-  border: none;
-}
-</style>
+  <!-- COCO SSD -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
+  <!-- MediaPipe Pose -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #0f2027;
+      font-family: system-ui;
+      color: white;
+      text-align: center;
+    }
+
+    h2 {
+      margin: 10px 0;
+    }
+
+    #container {
+      position: relative;
+      width: 100%;
+      max-width: 480px;
+      margin: auto;
+    }
+
+    video, canvas {
+      width: 100%;
+      border-radius: 12px;
+    }
+
+    #status {
+      margin: 10px;
+      font-size: 14px;
+      opacity: 0.8;
+    }
+  </style>
 </head>
 
 <body>
 
-<video id="video" autoplay playsinline></video>
-<canvas id="canvas"></canvas>
+<h2>Avaloka Yoga – Awareness Mode</h2>
+<div id="status">Loading models…</div>
 
-<div id="status">Tap START, then sit calmly</div>
-<button id="startBtn">START</button>
-
-<!-- Audio -->
-<audio id="tanpura" src="audio/tanpura.mp3" loop></audio>
-<audio id="sit" src="audio/sit.mp3"></audio>
-<audio id="hands" src="audio/hands.mp3"></audio>
-<audio id="spine" src="audio/spine.mp3"></audio>
-<audio id="eyes" src="audio/close_eyes.mp3"></audio>
-<audio id="focus" src="audio/focus.mp3"></audio>
-<audio id="in" src="audio/breathe_in.mp3"></audio>
-<audio id="out" src="audio/breathe_out.mp3"></audio>
-<audio id="identity" src="audio/identity.mp3"></audio>
-<audio id="remain" src="audio/remain.mp3"></audio>
+<div id="container">
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+</div>
 
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const statusEl = document.getElementById("status");
-const startBtn = document.getElementById("startBtn");
 
-const tanpura = document.getElementById("tanpura");
+let cocoModel;
+let pose;
 
-let cocoModel, poseModel;
-let presenceStart = null;
-let sessionStarted = false;
-
-const WAIT_SECONDS = 12;
-
-/* ---------- Audio helper ---------- */
-function play(id, delay=0) {
-  setTimeout(() => document.getElementById(id).play(), delay);
-}
-
-/* ---------- Camera ---------- */
 async function initCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" }
+    video: { facingMode: "user" }
   });
   video.srcObject = stream;
-  return new Promise(r => video.onloadedmetadata = r);
+
+  return new Promise(resolve => {
+    video.onloadedmetadata = () => {
+      video.play();
+      resolve();
+    };
+  });
 }
 
-/* ---------- Models ---------- */
 async function loadModels() {
   cocoModel = await cocoSsd.load();
+  statusEl.innerText = "COCO-SSD loaded";
 
-  poseModel = new Pose({
-    locateFile: f =>
-      `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
+  pose = new Pose({
+    locateFile: file =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
   });
 
-  poseModel.setOptions({
+  pose.setOptions({
     modelComplexity: 1,
     smoothLandmarks: true,
     minDetectionConfidence: 0.5,
     minTrackingConfidence: 0.5
   });
 
-  poseModel.onResults(drawPose);
+  pose.onResults(onPoseResults);
 }
 
-/* ---------- Skeleton ---------- */
-const links = [
-  [11,12],[11,13],[13,15],[12,14],[14,16],
-  [11,23],[12,24],[23,24]
-];
-
-function drawPose(res) {
-  if (!res.poseLandmarks) return;
-
-  ctx.strokeStyle = "rgba(0,255,200,0.6)";
-  ctx.lineWidth = 3;
-
-  links.forEach(([a,b]) => {
-    const p1 = res.poseLandmarks[a];
-    const p2 = res.poseLandmarks[b];
-    ctx.beginPath();
-    ctx.moveTo(p1.x*canvas.width, p1.y*canvas.height);
-    ctx.lineTo(p2.x*canvas.width, p2.y*canvas.height);
-    ctx.stroke();
-  });
-}
-
-/* ---------- Start Meditation Audio ---------- */
-function startMeditation() {
-  sessionStarted = true;
-  statusEl.innerText = "Meditation started";
-
-  tanpura.volume = 0.18;
-  tanpura.play();
-
-  play("sit", 1000);
-  play("hands", 6000);
-  play("spine", 12000);
-  play("eyes", 18000);
-  play("focus", 24000);
-  play("in", 32000);
-  play("out", 37000);
-  play("identity", 44000);
-  play("remain", 60000);
-
-  setTimeout(() => {
-    statusEl.innerText = "Silent meditation · Tanpura continues";
-  }, 70000);
-}
-
-/* ---------- Loop ---------- */
 async function detect() {
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
 
-  const preds = await cocoModel.detect(video);
-  const person = preds.find(p => p.class==="person" && p.score>0.4);
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  if (person) {
-    const [x,y,w,h] = person.bbox;
-    ctx.strokeStyle = "#fff";
-    ctx.strokeRect(x,y,w,h);
-
-    if (!presenceStart) presenceStart = Date.now();
-    const t = (Date.now()-presenceStart)/1000;
-
-    if (!sessionStarted)
-      statusEl.innerText =
-        `Presence detected · starting in ${Math.max(0,WAIT_SECONDS-Math.floor(t))}s`;
-
-    if (t >= WAIT_SECONDS && !sessionStarted) {
-      startMeditation();
+  /* COCO-SSD → Bounding Box */
+  const predictions = await cocoModel.detect(video);
+  predictions.forEach(p => {
+    if (p.class === "person") {
+      const [x, y, w, h] = p.bbox;
+      ctx.strokeStyle = "#00ffcc";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillText("Presence", x, y - 5);
     }
-  } else {
-    presenceStart = null;
-    if (!sessionStarted)
-      statusEl.innerText = "Waiting for presence…";
-  }
+  });
 
-  await poseModel.send({image: video});
+  /* MediaPipe Pose */
+  await pose.send({ image: video });
+
   requestAnimationFrame(detect);
 }
 
-/* ---------- Start ---------- */
-startBtn.onclick = async () => {
-  startBtn.style.display = "none";
+function onPoseResults(results) {
+  if (!results.poseLandmarks) return;
+
+  ctx.fillStyle = "#ffcc00";
+
+  results.poseLandmarks.forEach(lm => {
+    ctx.beginPath();
+    ctx.arc(lm.x * canvas.width, lm.y * canvas.height, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  });
+
+  statusEl.innerText = "Observing body & presence…";
+}
+
+async function start() {
   await initCamera();
   await loadModels();
   detect();
-};
+}
+
+start();
 </script>
 
 </body>
