@@ -1,13 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
+<meta charset="UTF-8">
 <title>Avaloka Meditation</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
 body {
@@ -17,189 +13,85 @@ body {
   font-family: system-ui;
   text-align: center;
 }
-video, canvas { width: 100%; }
-#status {
-  position: fixed;
-  bottom: 80px;
-  width: 100%;
-  opacity: 0.7;
-}
+
 #startBtn {
-  position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 14px 30px;
-  font-size: 16px;
-  border-radius: 30px;
+  margin-top: 40vh;
+  padding: 16px 36px;
+  font-size: 18px;
+  border-radius: 40px;
   border: none;
+  background: #ffffff;
+  color: #000;
+}
+
+#status {
+  margin-top: 20px;
+  opacity: 0.6;
+  font-size: 14px;
 }
 </style>
 </head>
 
 <body>
 
-<video id="video" autoplay playsinline></video>
-<canvas id="canvas"></canvas>
+<button id="startBtn">START MEDITATION</button>
+<div id="status">Tap once to begin</div>
 
-<div id="status">Tap START to enable voice</div>
-<button id="startBtn">START</button>
+<!-- Tanpura (continuous background) -->
+<audio id="tanpura" src="audio/tanpura.mp3" loop></audio>
+
+<!-- Voice guidance -->
+<audio id="sit" src="audio/sit.mp3"></audio>
+<audio id="hands" src="audio/hands.mp3"></audio>
+<audio id="spine" src="audio/spine.mp3"></audio>
+<audio id="eyes" src="audio/close_eyes.mp3"></audio>
+<audio id="focus" src="audio/focus.mp3"></audio>
+<audio id="in" src="audio/breathe_in.mp3"></audio>
+<audio id="out" src="audio/breathe_out.mp3"></audio>
+<audio id="identity" src="audio/identity.mp3"></audio>
+<audio id="relax" src="audio/relax.mp3"></audio>
+<audio id="remain" src="audio/remain.mp3"></audio>
 
 <script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("startBtn");
+const statusEl = document.getElementById("status");
+const tanpura = document.getElementById("tanpura");
 
-let cocoModel, poseModel;
-let voicesReady = false;
-let presenceStart = null;
-let sessionStarted = false;
-let lastHead = null;
-
-const WAIT_SECONDS = 12;
-
-/* ---------- VOICE INITIALIZATION (CRITICAL) ---------- */
-function initVoice() {
-  return new Promise(resolve => {
-    let voices = speechSynthesis.getVoices();
-    if (voices.length) {
-      voicesReady = true;
-      resolve();
-    } else {
-      speechSynthesis.onvoiceschanged = () => {
-        voicesReady = true;
-        resolve();
-      };
-    }
-  });
+function play(id, delay = 0) {
+  setTimeout(() => {
+    document.getElementById(id).play();
+  }, delay);
 }
 
-function speak(text) {
-  if (!voicesReady) return;
-  const u = new SpeechSynthesisUtterance(text);
-  u.rate = 0.85;
-  u.pitch = 1;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(u);
-}
-
-/* ---------- START BUTTON (UNLOCKS AUDIO) ---------- */
 startBtn.onclick = async () => {
   startBtn.style.display = "none";
-  statusEl.innerText = "Initializing…";
+  statusEl.innerText = "Settling…";
 
-  await initVoice();
+  /* Start tanpura first */
+  tanpura.volume = 0.18;   // soft background
+  await tanpura.play();
 
-  // 🔑 MUST speak immediately on click (iOS rule)
-  speak("Voice guidance enabled");
+  /* Voice guidance sequence */
+  play("sit", 1000);
+  play("hands", 6000);
+  play("spine", 12000);
+  play("eyes", 18000);
+  play("focus", 24000);
 
-  await initCamera();
-  await loadModels();
+  play("in", 32000);
+  play("out", 37000);
+  play("in", 42000);
+  play("out", 47000);
 
-  statusEl.innerText = "Waiting for presence…";
-  detect();
+  play("identity", 54000);
+  play("relax", 70000);
+  play("remain", 82000);
+
+  /* Silence phase */
+  setTimeout(() => {
+    statusEl.innerText = "Silent meditation · Tanpura only";
+  }, 90000);
 };
-
-/* ---------- CAMERA ---------- */
-async function initCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" }
-  });
-  video.srcObject = stream;
-  return new Promise(r => video.onloadedmetadata = r);
-}
-
-/* ---------- MODELS ---------- */
-async function loadModels() {
-  cocoModel = await cocoSsd.load();
-
-  poseModel = new Pose({
-    locateFile: f =>
-      `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`
-  });
-
-  poseModel.setOptions({
-    modelComplexity: 1,
-    smoothLandmarks: true,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
-  });
-
-  poseModel.onResults(onPose);
-}
-
-/* ---------- SKELETON ---------- */
-const connections = [
-  [11,13],[13,15],[12,14],[14,16],
-  [11,12],[23,24],
-  [11,23],[12,24]
-];
-
-function onPose(res) {
-  if (!res.poseLandmarks) return;
-
-  ctx.strokeStyle = "rgba(0,255,200,0.6)";
-  ctx.lineWidth = 3;
-
-  connections.forEach(([a,b]) => {
-    const p1 = res.poseLandmarks[a];
-    const p2 = res.poseLandmarks[b];
-    ctx.beginPath();
-    ctx.moveTo(p1.x*canvas.width, p1.y*canvas.height);
-    ctx.lineTo(p2.x*canvas.width, p2.y*canvas.height);
-    ctx.stroke();
-  });
-
-  const head = res.poseLandmarks[0];
-  if (lastHead && sessionStarted) {
-    const move =
-      Math.abs(head.x-lastHead.x)+Math.abs(head.y-lastHead.y);
-    if (move > 0.02) speak("Relax. Remain still.");
-  }
-  lastHead = head;
-}
-
-/* ---------- START MEDITATION ---------- */
-function startMeditation() {
-  sessionStarted = true;
-  statusEl.innerText = "Meditation started";
-
-  speak("Please sit comfortably in front of the camera.");
-  setTimeout(()=>speak("Relax your hands, palms upward."),4000);
-  setTimeout(()=>speak("Keep your spine naturally straight."),8000);
-  setTimeout(()=>speak("Close your eyes gently."),12000);
-  setTimeout(()=>speak("Slowly breathe in."),16000);
-  setTimeout(()=>speak("Slowly breathe out."),20000);
-  setTimeout(()=>speak("You are pure consciousness."),24000);
-}
-
-/* ---------- LOOP ---------- */
-async function detect() {
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
-
-  const preds = await cocoModel.detect(video);
-  const person = preds.find(p => p.class==="person" && p.score>0.4);
-
-  if (person) {
-    if (!presenceStart) presenceStart = Date.now();
-    const t = (Date.now()-presenceStart)/1000;
-
-    statusEl.innerText =
-      `Presence detected · starting in ${Math.max(12-Math.floor(t),0)}s`;
-
-    if (t>=WAIT_SECONDS && !sessionStarted) startMeditation();
-  } else {
-    presenceStart = null;
-    if (!sessionStarted) statusEl.innerText = "Waiting for presence…";
-  }
-
-  await poseModel.send({image: video});
-  requestAnimationFrame(detect);
-}
 </script>
 
 </body>
