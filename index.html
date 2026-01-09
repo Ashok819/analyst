@@ -22,18 +22,28 @@ body {
   font-family: system-ui;
   text-align: center;
 }
-#container {
-  position: relative;
-}
-video, canvas {
-  width: 100%;
-}
+#container { position: relative; }
+video, canvas { width: 100%; }
+
 #status {
   position: fixed;
-  bottom: 12px;
+  bottom: 70px;
   width: 100%;
   font-size: 14px;
   opacity: 0.7;
+}
+
+#startBtn {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 28px;
+  font-size: 16px;
+  border-radius: 30px;
+  border: none;
+  background: #ffffff;
+  color: #000;
 }
 </style>
 </head>
@@ -44,34 +54,47 @@ video, canvas {
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas"></canvas>
 </div>
-<div id="status">Waiting for presence…</div>
+
+<div id="status">Click START to begin</div>
+<button id="startBtn">Start Meditation</button>
 
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const statusEl = document.getElementById("status");
+const startBtn = document.getElementById("startBtn");
 
 let cocoModel, poseModel;
-
-/* ===== STATE ===== */
 let presenceStart = null;
 let sessionStarted = false;
+let audioUnlocked = false;
 let lastHead = null;
 
-/* ===== CONFIG ===== */
 const WAIT_SECONDS = 12;
 
-/* ===== VOICE ===== */
+/* ---------- SPEAK ---------- */
 function speak(text) {
+  if (!audioUnlocked) return;
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 0.85;
-  u.pitch = 1;
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
 }
 
-/* ===== CAMERA ===== */
+/* ---------- START BUTTON ---------- */
+startBtn.onclick = async () => {
+  audioUnlocked = true;
+  speak("Audio enabled");
+  startBtn.style.display = "none";
+  statusEl.innerText = "Camera initializing…";
+  await initCamera();
+  await loadModels();
+  statusEl.innerText = "Waiting for presence…";
+  detect();
+};
+
+/* ---------- CAMERA ---------- */
 async function initCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: "environment" }
@@ -80,7 +103,7 @@ async function initCamera() {
   return new Promise(r => video.onloadedmetadata = r);
 }
 
-/* ===== LOAD MODELS ===== */
+/* ---------- LOAD MODELS ---------- */
 async function loadModels() {
   cocoModel = await cocoSsd.load();
 
@@ -99,7 +122,7 @@ async function loadModels() {
   poseModel.onResults(onPose);
 }
 
-/* ===== SKELETON CONNECTIONS ===== */
+/* ---------- SKELETON ---------- */
 const connections = [
   [11,13],[13,15],[12,14],[14,16],
   [11,12],[23,24],
@@ -107,7 +130,6 @@ const connections = [
   [23,25],[25,27],[24,26],[26,28]
 ];
 
-/* ===== DRAW SKELETON ===== */
 function drawSkeleton(lm) {
   ctx.strokeStyle = "rgba(0,255,200,0.6)";
   ctx.lineWidth = 3;
@@ -119,7 +141,7 @@ function drawSkeleton(lm) {
   });
 }
 
-/* ===== POSE RESULTS ===== */
+/* ---------- POSE ---------- */
 function onPose(res) {
   if (!res.poseLandmarks) return;
 
@@ -127,45 +149,42 @@ function onPose(res) {
 
   const head = res.poseLandmarks[0];
   if (lastHead && sessionStarted) {
-    const movement =
+    const move =
       Math.abs(head.x - lastHead.x) +
       Math.abs(head.y - lastHead.y);
 
-    if (movement > 0.02) {
+    if (move > 0.02) {
       speak("Relax. Remain still.");
     }
   }
   lastHead = head;
 }
 
-/* ===== START MEDITATION ===== */
+/* ---------- START MEDITATION ---------- */
 function startMeditation() {
   sessionStarted = true;
   statusEl.innerText = "Meditation started";
 
   speak("Please sit comfortably in front of the camera.");
-  setTimeout(() => speak("Place your hands relaxed, palms upward."), 4000);
-  setTimeout(() => speak("Keep your spine naturally straight."), 8000);
-  setTimeout(() => speak("Close your eyes gently."), 12000);
-  setTimeout(() => speak("Bring attention between your eyebrows."), 16000);
-  setTimeout(() => speak("Slowly breathe in."), 20000);
-  setTimeout(() => speak("Slowly breathe out."), 24000);
-  setTimeout(() => speak("You are not the body."), 28000);
-  setTimeout(() => speak("You are not the mind."), 32000);
-  setTimeout(() => speak("You are pure consciousness."), 36000);
-  setTimeout(() => {
-    statusEl.innerText = "Silent meditation (2 minutes)";
-  }, 42000);
+  setTimeout(()=>speak("Place your hands relaxed, palms upward."),4000);
+  setTimeout(()=>speak("Keep your spine naturally straight."),8000);
+  setTimeout(()=>speak("Close your eyes gently."),12000);
+  setTimeout(()=>speak("Bring attention between your eyebrows."),16000);
+  setTimeout(()=>speak("Slowly breathe in."),20000);
+  setTimeout(()=>speak("Slowly breathe out."),24000);
+  setTimeout(()=>speak("You are not the body."),28000);
+  setTimeout(()=>speak("You are not the mind."),32000);
+  setTimeout(()=>speak("You are pure consciousness."),36000);
 }
 
-/* ===== MAIN LOOP ===== */
+/* ---------- MAIN LOOP ---------- */
 async function detect() {
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video,0,0,canvas.width,canvas.height);
 
   const preds = await cocoModel.detect(video);
-  const person = preds.find(p => p.class === "person" && p.score > 0.4);
+  const person = preds.find(p => p.class==="person" && p.score > 0.4);
 
   if (person) {
     const [x,y,w,h] = person.bbox;
@@ -173,41 +192,25 @@ async function detect() {
     ctx.lineWidth = 2;
     ctx.strokeRect(x,y,w,h);
 
-    if (!presenceStart) {
-      presenceStart = Date.now();
-    }
-
-    const seconds =
-      Math.floor((Date.now() - presenceStart) / 1000);
+    if (!presenceStart) presenceStart = Date.now();
+    const elapsed = (Date.now() - presenceStart)/1000;
 
     if (!sessionStarted) {
       statusEl.innerText =
-        `Presence detected · starting in ${Math.max(WAIT_SECONDS - seconds,0)}s`;
+        `Presence detected · starting in ${Math.max(12 - Math.floor(elapsed),0)}s`;
     }
 
-    if (seconds >= WAIT_SECONDS && !sessionStarted) {
+    if (elapsed >= WAIT_SECONDS && !sessionStarted) {
       startMeditation();
     }
-
   } else {
     presenceStart = null;
-    if (!sessionStarted) {
-      statusEl.innerText = "Waiting for presence…";
-    }
+    if (!sessionStarted) statusEl.innerText = "Waiting for presence…";
   }
 
-  await poseModel.send({ image: video });
+  await poseModel.send({image: video});
   requestAnimationFrame(detect);
 }
-
-/* ===== INIT ===== */
-(async () => {
-  await initCamera();
-  statusEl.innerText = "Camera ready…";
-  await loadModels();
-  statusEl.innerText = "Waiting for presence…";
-  detect();
-})();
 </script>
 
 </body>
