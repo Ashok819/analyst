@@ -5,13 +5,8 @@
 <title>Avaloka Meditation</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<!-- TensorFlow -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-
-<!-- COCO-SSD -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-
-<!-- MediaPipe Pose -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
 
 <style>
@@ -22,41 +17,33 @@ body {
   font-family: system-ui;
   text-align: center;
 }
-#container { position: relative; }
 video, canvas { width: 100%; }
-
 #status {
   position: fixed;
-  bottom: 70px;
+  bottom: 80px;
   width: 100%;
-  font-size: 14px;
   opacity: 0.7;
 }
-
 #startBtn {
   position: fixed;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 12px 28px;
+  padding: 14px 30px;
   font-size: 16px;
   border-radius: 30px;
   border: none;
-  background: #ffffff;
-  color: #000;
 }
 </style>
 </head>
 
 <body>
 
-<div id="container">
-  <video id="video" autoplay playsinline></video>
-  <canvas id="canvas"></canvas>
-</div>
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
 
-<div id="status">Click START to begin</div>
-<button id="startBtn">Start Meditation</button>
+<div id="status">Tap START to enable voice</div>
+<button id="startBtn">START</button>
 
 <script>
 const video = document.getElementById("video");
@@ -66,30 +53,51 @@ const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("startBtn");
 
 let cocoModel, poseModel;
+let voicesReady = false;
 let presenceStart = null;
 let sessionStarted = false;
-let audioUnlocked = false;
 let lastHead = null;
 
 const WAIT_SECONDS = 12;
 
-/* ---------- SPEAK ---------- */
+/* ---------- VOICE INITIALIZATION (CRITICAL) ---------- */
+function initVoice() {
+  return new Promise(resolve => {
+    let voices = speechSynthesis.getVoices();
+    if (voices.length) {
+      voicesReady = true;
+      resolve();
+    } else {
+      speechSynthesis.onvoiceschanged = () => {
+        voicesReady = true;
+        resolve();
+      };
+    }
+  });
+}
+
 function speak(text) {
-  if (!audioUnlocked) return;
+  if (!voicesReady) return;
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 0.85;
+  u.pitch = 1;
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
 }
 
-/* ---------- START BUTTON ---------- */
+/* ---------- START BUTTON (UNLOCKS AUDIO) ---------- */
 startBtn.onclick = async () => {
-  audioUnlocked = true;
-  speak("Audio enabled");
   startBtn.style.display = "none";
-  statusEl.innerText = "Camera initializing…";
+  statusEl.innerText = "Initializing…";
+
+  await initVoice();
+
+  // 🔑 MUST speak immediately on click (iOS rule)
+  speak("Voice guidance enabled");
+
   await initCamera();
   await loadModels();
+
   statusEl.innerText = "Waiting for presence…";
   detect();
 };
@@ -103,7 +111,7 @@ async function initCamera() {
   return new Promise(r => video.onloadedmetadata = r);
 }
 
-/* ---------- LOAD MODELS ---------- */
+/* ---------- MODELS ---------- */
 async function loadModels() {
   cocoModel = await cocoSsd.load();
 
@@ -126,36 +134,29 @@ async function loadModels() {
 const connections = [
   [11,13],[13,15],[12,14],[14,16],
   [11,12],[23,24],
-  [11,23],[12,24],
-  [23,25],[25,27],[24,26],[26,28]
+  [11,23],[12,24]
 ];
 
-function drawSkeleton(lm) {
-  ctx.strokeStyle = "rgba(0,255,200,0.6)";
-  ctx.lineWidth = 3;
-  connections.forEach(([a,b]) => {
-    ctx.beginPath();
-    ctx.moveTo(lm[a].x * canvas.width, lm[a].y * canvas.height);
-    ctx.lineTo(lm[b].x * canvas.width, lm[b].y * canvas.height);
-    ctx.stroke();
-  });
-}
-
-/* ---------- POSE ---------- */
 function onPose(res) {
   if (!res.poseLandmarks) return;
 
-  drawSkeleton(res.poseLandmarks);
+  ctx.strokeStyle = "rgba(0,255,200,0.6)";
+  ctx.lineWidth = 3;
+
+  connections.forEach(([a,b]) => {
+    const p1 = res.poseLandmarks[a];
+    const p2 = res.poseLandmarks[b];
+    ctx.beginPath();
+    ctx.moveTo(p1.x*canvas.width, p1.y*canvas.height);
+    ctx.lineTo(p2.x*canvas.width, p2.y*canvas.height);
+    ctx.stroke();
+  });
 
   const head = res.poseLandmarks[0];
   if (lastHead && sessionStarted) {
     const move =
-      Math.abs(head.x - lastHead.x) +
-      Math.abs(head.y - lastHead.y);
-
-    if (move > 0.02) {
-      speak("Relax. Remain still.");
-    }
+      Math.abs(head.x-lastHead.x)+Math.abs(head.y-lastHead.y);
+    if (move > 0.02) speak("Relax. Remain still.");
   }
   lastHead = head;
 }
@@ -166,43 +167,31 @@ function startMeditation() {
   statusEl.innerText = "Meditation started";
 
   speak("Please sit comfortably in front of the camera.");
-  setTimeout(()=>speak("Place your hands relaxed, palms upward."),4000);
+  setTimeout(()=>speak("Relax your hands, palms upward."),4000);
   setTimeout(()=>speak("Keep your spine naturally straight."),8000);
   setTimeout(()=>speak("Close your eyes gently."),12000);
-  setTimeout(()=>speak("Bring attention between your eyebrows."),16000);
-  setTimeout(()=>speak("Slowly breathe in."),20000);
-  setTimeout(()=>speak("Slowly breathe out."),24000);
-  setTimeout(()=>speak("You are not the body."),28000);
-  setTimeout(()=>speak("You are not the mind."),32000);
-  setTimeout(()=>speak("You are pure consciousness."),36000);
+  setTimeout(()=>speak("Slowly breathe in."),16000);
+  setTimeout(()=>speak("Slowly breathe out."),20000);
+  setTimeout(()=>speak("You are pure consciousness."),24000);
 }
 
-/* ---------- MAIN LOOP ---------- */
+/* ---------- LOOP ---------- */
 async function detect() {
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   ctx.drawImage(video,0,0,canvas.width,canvas.height);
 
   const preds = await cocoModel.detect(video);
-  const person = preds.find(p => p.class==="person" && p.score > 0.4);
+  const person = preds.find(p => p.class==="person" && p.score>0.4);
 
   if (person) {
-    const [x,y,w,h] = person.bbox;
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x,y,w,h);
-
     if (!presenceStart) presenceStart = Date.now();
-    const elapsed = (Date.now() - presenceStart)/1000;
+    const t = (Date.now()-presenceStart)/1000;
 
-    if (!sessionStarted) {
-      statusEl.innerText =
-        `Presence detected · starting in ${Math.max(12 - Math.floor(elapsed),0)}s`;
-    }
+    statusEl.innerText =
+      `Presence detected · starting in ${Math.max(12-Math.floor(t),0)}s`;
 
-    if (elapsed >= WAIT_SECONDS && !sessionStarted) {
-      startMeditation();
-    }
+    if (t>=WAIT_SECONDS && !sessionStarted) startMeditation();
   } else {
     presenceStart = null;
     if (!sessionStarted) statusEl.innerText = "Waiting for presence…";
