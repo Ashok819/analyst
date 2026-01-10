@@ -2,98 +2,118 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Camera + AI (Transformers.js)</title>
+<title>Camera → Equation → Solve</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+<!-- Math.js -->
+<script src="https://cdn.jsdelivr.net/npm/mathjs/lib/browser/math.js"></script>
+
+<!-- Tesseract OCR -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
 <style>
-  body {
-    background:#020617;
-    color:#e5e7eb;
-    font-family: system-ui;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    height:100vh;
-    margin:0;
-  }
-  .app {
-    width:100%;
-    max-width:420px;
-    padding:15px;
-  }
-  video {
-    width:100%;
-    border-radius:12px;
-  }
-  button {
-    width:100%;
-    margin-top:12px;
-    padding:12px;
-    border:none;
-    border-radius:8px;
-    background:#6366f1;
-    color:white;
-    font-size:16px;
-  }
-  .result {
-    margin-top:12px;
-    text-align:center;
-    font-size:18px;
-  }
+body {
+  background:#020617;
+  color:#e5e7eb;
+  font-family: system-ui;
+  margin:0;
+  display:flex;
+  justify-content:center;
+}
+.app {
+  width:100%;
+  max-width:420px;
+  padding:15px;
+}
+video, canvas {
+  width:100%;
+  border-radius:12px;
+}
+button {
+  width:100%;
+  margin-top:10px;
+  padding:12px;
+  font-size:16px;
+  border:none;
+  border-radius:8px;
+  background:#6366f1;
+  color:white;
+}
+textarea {
+  width:100%;
+  margin-top:10px;
+  padding:10px;
+  border-radius:8px;
+  font-size:16px;
+}
+.result {
+  margin-top:12px;
+  font-size:18px;
+  text-align:center;
+}
 </style>
 </head>
 
 <body>
 <div class="app">
-  <h2>📷 Camera AI Analyzer</h2>
+  <h2>📷 Math Solver Camera</h2>
 
   <video id="video" autoplay playsinline></video>
+  <canvas id="canvas" hidden></canvas>
 
-  <button id="snap">Analyze Frame</button>
+  <button onclick="capture()">📸 Capture Equation</button>
 
-  <div class="result" id="result">Loading AI…</div>
+  <textarea id="equation" placeholder="Equation appears here"></textarea>
+
+  <button onclick="solve()">🧠 Solve</button>
+
+  <div class="result" id="result"></div>
 </div>
 
-<script type="module">
-import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1";
-
+<script>
 const video = document.getElementById("video");
-const result = document.getElementById("result");
-const snapBtn = document.getElementById("snap");
+const canvas = document.getElementById("canvas");
+const equationBox = document.getElementById("equation");
+const resultBox = document.getElementById("result");
 
-let classifier;
-
-// Open camera
+// Open back camera
 navigator.mediaDevices.getUserMedia({
   video: { facingMode: "environment" }
-}).then(stream => {
-  video.srcObject = stream;
-});
+}).then(stream => video.srcObject = stream);
 
-// Load vision model
-classifier = await pipeline(
-  "image-classification",
-  "Xenova/mobilenet_v2_1.0_224"
-);
-
-result.textContent = "✅ Model ready";
-
-// Capture frame & analyze
-snapBtn.onclick = async () => {
-  result.textContent = "🤖 Analyzing…";
-
-  const canvas = document.createElement("canvas");
+// Capture image + OCR
+async function capture() {
+  resultBox.textContent = "🔍 Reading equation...";
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
 
-  const ctx = canvas.getContext("2d");
-  ctx.drawImage(video, 0, 0);
+  const { data } = await Tesseract.recognize(canvas, "eng");
+  equationBox.value = data.text
+    .replace(/\s+/g, "")
+    .replace("—", "-");
+  resultBox.textContent = "✏️ Edit if needed, then Solve";
+}
 
-  const prediction = await classifier(canvas);
+// Solve using Math.js
+function solve() {
+  try {
+    let eq = equationBox.value;
 
-  result.innerHTML =
-    `🧠 ${prediction[0].label}<br>🎯 ${(prediction[0].score*100).toFixed(1)}%`;
-};
+    if (eq.includes("=")) {
+      // Convert equation to expression
+      const [left, right] = eq.split("=");
+      const expr = `${left}-(${right})`;
+      const solution = math.solve(expr, "x");
+      resultBox.textContent = `✅ x = ${solution}`;
+    } else {
+      resultBox.textContent =
+        "✅ Result = " + math.evaluate(eq).toString();
+    }
+  } catch (e) {
+    resultBox.textContent = "❌ Could not solve";
+  }
+}
 </script>
 </body>
 </html>
