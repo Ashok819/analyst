@@ -2,127 +2,98 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Avaloka Meditation</title>
+<title>Camera + AI (Transformers.js)</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
-
 <style>
-body {
-  margin: 0;
-  background: #000;
-  color: #fff;
-  font-family: system-ui;
-  text-align: center;
-}
-video, canvas {
-  width: 100%;
-}
-#status {
-  position: fixed;
-  bottom: 10px;
-  width: 100%;
-  opacity: 0.6;
-  font-size: 14px;
-}
+  body {
+    background:#020617;
+    color:#e5e7eb;
+    font-family: system-ui;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    height:100vh;
+    margin:0;
+  }
+  .app {
+    width:100%;
+    max-width:420px;
+    padding:15px;
+  }
+  video {
+    width:100%;
+    border-radius:12px;
+  }
+  button {
+    width:100%;
+    margin-top:12px;
+    padding:12px;
+    border:none;
+    border-radius:8px;
+    background:#6366f1;
+    color:white;
+    font-size:16px;
+  }
+  .result {
+    margin-top:12px;
+    text-align:center;
+    font-size:18px;
+  }
 </style>
 </head>
 
 <body>
+<div class="app">
+  <h2>📷 Camera AI Analyzer</h2>
 
-<video id="video" autoplay playsinline></video>
-<canvas id="canvas"></canvas>
-<div id="status">Waiting…</div>
+  <video id="video" autoplay playsinline></video>
 
-<script>
+  <button id="snap">Analyze Frame</button>
+
+  <div class="result" id="result">Loading AI…</div>
+</div>
+
+<script type="module">
+import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1";
+
 const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const statusEl = document.getElementById("status");
+const result = document.getElementById("result");
+const snapBtn = document.getElementById("snap");
 
-let cocoModel, faceModel;
-let sessionStarted = false;
-let silenceStart = null;
-let lastHeadY = null;
+let classifier;
 
-function speak(text) {
-  const u = new SpeechSynthesisUtterance(text);
-  u.rate = 0.85;
-  u.pitch = 1;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(u);
-}
-
-/* Camera (Back if available) */
+// Open camera
 navigator.mediaDevices.getUserMedia({
   video: { facingMode: "environment" }
-}).then(stream => video.srcObject = stream);
+}).then(stream => {
+  video.srcObject = stream;
+});
 
-/* Load Models */
-(async () => {
-  cocoModel = await cocoSsd.load();
+// Load vision model
+classifier = await pipeline(
+  "image-classification",
+  "Xenova/mobilenet_v2_1.0_224"
+);
 
-  faceModel = new FaceMesh({
-    locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
-  });
+result.textContent = "✅ Model ready";
 
-  faceModel.setOptions({
-    maxNumFaces: 1,
-    refineLandmarks: true
-  });
+// Capture frame & analyze
+snapBtn.onclick = async () => {
+  result.textContent = "🤖 Analyzing…";
 
-  faceModel.onResults(onFace);
-})();
-
-/* Face Logic */
-function onFace(res) {
-  if (!res.multiFaceLandmarks) return;
-
-  const face = res.multiFaceLandmarks[0];
-  const leftEye = face[159];
-  const rightEye = face[386];
-
-  const eyesOpen = Math.abs(leftEye.y - rightEye.y) < 0.01;
-
-  if (eyesOpen) {
-    speak("Gently close your eyes");
-  }
-}
-
-/* Main Loop */
-async function detect() {
+  const canvas = document.createElement("canvas");
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
 
-  ctx.drawImage(video,0,0,canvas.width,canvas.height);
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(video, 0, 0);
 
-  const preds = await cocoModel.detect(video);
-  const person = preds.find(p => p.class === "person");
+  const prediction = await classifier(canvas);
 
-  if (person && !sessionStarted) {
-    sessionStarted = true;
-    speak("Please sit comfortably in front of the camera");
-    setTimeout(() => speak("Relax your body"), 3000);
-    setTimeout(() => speak("Close your eyes gently"), 6000);
-    setTimeout(() => speak("Breathe in"), 9000);
-    setTimeout(() => speak("Breathe out"), 12000);
-    silenceStart = Date.now();
-  }
-
-  if (sessionStarted) {
-    if (Date.now() - silenceStart > 120000) {
-      statusEl.innerText = "Silent meditation";
-    }
-  }
-
-  await faceModel.send({image: video});
-  requestAnimationFrame(detect);
-}
-
-detect();
+  result.innerHTML =
+    `🧠 ${prediction[0].label}<br>🎯 ${(prediction[0].score*100).toFixed(1)}%`;
+};
 </script>
-
 </body>
 </html>
