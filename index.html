@@ -2,118 +2,132 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Camera → Equation → Solve</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<!-- Math.js -->
-<script src="https://cdn.jsdelivr.net/npm/mathjs/lib/browser/math.js"></script>
-
-<!-- Tesseract OCR -->
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<title>Offline AI Chatbot</title>
 
 <style>
 body {
-  background:#020617;
-  color:#e5e7eb;
-  font-family: system-ui;
-  margin:0;
-  display:flex;
-  justify-content:center;
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: #0f172a;
+  color: #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
 }
-.app {
-  width:100%;
-  max-width:420px;
-  padding:15px;
+
+header {
+  padding: 12px;
+  text-align: center;
+  background: #020617;
+  font-weight: bold;
 }
-video, canvas {
-  width:100%;
-  border-radius:12px;
+
+#chat {
+  flex: 1;
+  padding: 12px;
+  overflow-y: auto;
 }
+
+.msg {
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  max-width: 85%;
+}
+
+.user {
+  background: #2563eb;
+  margin-left: auto;
+}
+
+.bot {
+  background: #1e293b;
+}
+
+footer {
+  display: flex;
+  padding: 10px;
+  gap: 8px;
+  background: #020617;
+}
+
+input {
+  flex: 1;
+  padding: 10px;
+  border-radius: 8px;
+  border: none;
+}
+
 button {
-  width:100%;
-  margin-top:10px;
-  padding:12px;
-  font-size:16px;
-  border:none;
-  border-radius:8px;
-  background:#6366f1;
-  color:white;
-}
-textarea {
-  width:100%;
-  margin-top:10px;
-  padding:10px;
-  border-radius:8px;
-  font-size:16px;
-}
-.result {
-  margin-top:12px;
-  font-size:18px;
-  text-align:center;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: none;
+  background: #22c55e;
+  font-weight: bold;
 }
 </style>
 </head>
 
 <body>
-<div class="app">
-  <h2>📷 Math Solver Camera</h2>
 
-  <video id="video" autoplay playsinline></video>
-  <canvas id="canvas" hidden></canvas>
+<header>🧠 Offline AI Chatbot</header>
 
-  <button onclick="capture()">📸 Capture Equation</button>
+<div id="chat"></div>
 
-  <textarea id="equation" placeholder="Equation appears here"></textarea>
+<footer>
+  <input id="input" placeholder="Type your message..." />
+  <button onclick="send()">Send</button>
+</footer>
 
-  <button onclick="solve()">🧠 Solve</button>
+<script type="module">
+import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.6.0";
 
-  <div class="result" id="result"></div>
-</div>
+const chat = document.getElementById("chat");
+const input = document.getElementById("input");
 
-<script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const equationBox = document.getElementById("equation");
-const resultBox = document.getElementById("result");
-
-// Open back camera
-navigator.mediaDevices.getUserMedia({
-  video: { facingMode: "environment" }
-}).then(stream => video.srcObject = stream);
-
-// Capture image + OCR
-async function capture() {
-  resultBox.textContent = "🔍 Reading equation...";
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext("2d").drawImage(video, 0, 0);
-
-  const { data } = await Tesseract.recognize(canvas, "eng");
-  equationBox.value = data.text
-    .replace(/\s+/g, "")
-    .replace("—", "-");
-  resultBox.textContent = "✏️ Edit if needed, then Solve";
+function addMsg(text, cls) {
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.textContent = text;
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
 }
 
-// Solve using Math.js
-function solve() {
-  try {
-    let eq = equationBox.value;
+addMsg("Loading AI model… (first time may take ~30–60s)", "bot");
 
-    if (eq.includes("=")) {
-      // Convert equation to expression
-      const [left, right] = eq.split("=");
-      const expr = `${left}-(${right})`;
-      const solution = math.solve(expr, "x");
-      resultBox.textContent = `✅ x = ${solution}`;
-    } else {
-      resultBox.textContent =
-        "✅ Result = " + math.evaluate(eq).toString();
-    }
-  } catch (e) {
-    resultBox.textContent = "❌ Could not solve";
-  }
+const generator = await pipeline(
+  "text-generation",
+  "Xenova/tiny-gpt2",
+  { quantized: true }
+);
+
+addMsg("AI ready. Ask me anything.", "bot");
+
+async function send() {
+  if (!input.value.trim()) return;
+
+  const userText = input.value;
+  input.value = "";
+
+  addMsg(userText, "user");
+
+  const prompt = `User: ${userText}\nAI:`;
+
+  const output = await generator(prompt, {
+    max_new_tokens: 60,
+    temperature: 0.7,
+    top_p: 0.9
+  });
+
+  let reply = output[0].generated_text.replace(prompt, "").trim();
+  addMsg(reply || "…", "bot");
 }
+
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter") send();
+});
 </script>
+
 </body>
 </html>
